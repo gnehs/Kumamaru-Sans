@@ -4,7 +4,7 @@ import pytest
 
 from kumamaru.geometry.safety import symmetric_boundary_deviation, topology_signature
 from kumamaru.model import Candidate, Contour, GlyphOutline, LineSegment, Point
-from kumamaru.pipeline import _candidate_edit_bound
+from kumamaru.pipeline import _candidate_edit_bound, _candidate_screening_bound
 
 
 def _rectangle(
@@ -71,11 +71,11 @@ def test_boundary_deviation_is_independent_of_line_segmentation() -> None:
     ) == pytest.approx(0)
 
 
-def test_corner_candidate_bound_includes_acute_trim_distance() -> None:
+def test_compact_corner_bound_measures_curve_deviation_not_trim_length() -> None:
     candidate = Candidate(
         candidate_id="corner-acute",
         kind="corner",
-        glyph_name="star",
+        glyph_name="bopomofo",
         contour_index=0,
         segment_start=0,
         segment_end=1,
@@ -83,7 +83,14 @@ def test_corner_candidate_bound_includes_acute_trim_distance() -> None:
         confidence=1.0,
         reason="test",
         point=Point(0, 0),
-        geometry={"radius": 70.0, "trim_distance": 113.0},
+        geometry={
+            "radius": 70.0,
+            "trim_distance": 122.769376,
+            "interior_angle_deg": 59.381395,
+        },
     )
 
-    assert _candidate_edit_bound(candidate) == 113.0
+    assert _candidate_edit_bound(candidate) == pytest.approx(53.326, abs=0.001)
+    assert _candidate_edit_bound(candidate) < 80.0
+    assert _candidate_screening_bound(candidate) == pytest.approx(122.769376)
+    assert _candidate_screening_bound(candidate) > 80.0

@@ -169,6 +169,11 @@ def test_build_all_encoded_glyphs_uses_each_best_cmap_glyph_once(tmp_path: Path)
             }
         )
     } == {frozenset(entry) for entry in glyphs}
+    triangle = next(entry for entry in glyphs if entry["glyph_name"] == "A")
+    assert triangle["safety"]["boundary_measurement"] == "serialized_sampled_hausdorff"
+    assert triangle["safety"]["boundary_deviation"] > triangle["safety"]["boundary_limit"]
+    assert triangle["applied_candidate_ids"] == []
+    assert any("rolled back" in warning for warning in triangle["warnings"])
 
 
 def test_validate_all_encoded_glyphs_uses_each_best_cmap_glyph_once(tmp_path: Path) -> None:

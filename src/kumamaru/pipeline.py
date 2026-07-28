@@ -573,26 +573,60 @@ def _build_outlines(
                 result.applied_candidate_ids
             )
             final_outline = cleanup_result.outline
+            maximum_deviation = config.cleanup.max_bbox_change_em * font["head"].unitsPerEm
+            rebuilt_glyph: Any | None = None
+            original_point_count: int | None = None
+            rebuilt_point_count: int | None = None
             if compact_report:
                 applied_candidates = {
                     candidate.candidate_id: candidate
                     for candidate in all_terminal_candidates + result.candidates
                 }
+                selected_candidates = [
+                    applied_candidates[candidate_id]
+                    for candidate_id in applied_candidate_ids
+                    if candidate_id in applied_candidates
+                ]
                 boundary_deviation = max(
-                    (
-                        _candidate_edit_bound(applied_candidates[candidate_id])
-                        for candidate_id in applied_candidate_ids
-                        if candidate_id in applied_candidates
-                    ),
+                    map(_candidate_edit_bound, selected_candidates),
                     default=0.0,
                 )
                 boundary_measurement = "candidate_bound"
+                if (
+                    applied_candidate_ids
+                    and max(
+                        map(_candidate_screening_bound, selected_candidates),
+                        default=0.0,
+                    )
+                    > maximum_deviation
+                ):
+                    rebuilt_glyph = outline_to_glyph(final_outline)
+                    original_glyph = font["glyf"][glyph_name]
+                    original_point_count = _decomposed_point_count(font, glyph_name)
+                    font["glyf"][glyph_name] = rebuilt_glyph
+                    try:
+                        rebuilt_glyph.recalcBounds(font["glyf"])
+                        rebuilt_point_count = _decomposed_point_count(font, glyph_name)
+                        serialized_outline = glyph_to_outline(
+                            glyph_set[glyph_name],
+                            glyph_name=glyph_name,
+                            width=font["hmtx"][glyph_name][0],
+                            glyph_set=glyph_set,
+                        )
+                    finally:
+                        font["glyf"][glyph_name] = original_glyph
+                    boundary_deviation = symmetric_boundary_deviation(
+                        outline,
+                        serialized_outline,
+                        subdivisions=4,
+                        max_samples=256,
+                    )
+                    boundary_measurement = "serialized_sampled_hausdorff"
             else:
                 boundary_deviation = symmetric_boundary_deviation(outline, final_outline)
                 boundary_measurement = "sampled_hausdorff"
             before_topology = topology_signature(outline)
             after_topology = topology_signature(final_outline)
-            maximum_deviation = config.cleanup.max_bbox_change_em * font["head"].unitsPerEm
             if applied_candidate_ids and (
                 not math.isfinite(boundary_deviation)
                 or boundary_deviation > maximum_deviation
@@ -605,14 +639,17 @@ def _build_outlines(
                 )
                 applied_candidate_ids = []
             if applied_candidate_ids:
-                rebuilt_glyph = outline_to_glyph(final_outline)
+                if rebuilt_glyph is None:
+                    rebuilt_glyph = outline_to_glyph(final_outline)
                 original_glyph = font["glyf"][glyph_name]
-                original_point_count = _decomposed_point_count(font, glyph_name)
-                font["glyf"][glyph_name] = rebuilt_glyph
-                try:
-                    rebuilt_point_count = _decomposed_point_count(font, glyph_name)
-                finally:
-                    font["glyf"][glyph_name] = original_glyph
+                if original_point_count is None or rebuilt_point_count is None:
+                    original_point_count = _decomposed_point_count(font, glyph_name)
+                    font["glyf"][glyph_name] = rebuilt_glyph
+                    try:
+                        rebuilt_glyph.recalcBounds(font["glyf"])
+                        rebuilt_point_count = _decomposed_point_count(font, glyph_name)
+                    finally:
+                        font["glyf"][glyph_name] = original_glyph
                 point_limit = max(
                     1,
                     int(original_point_count * config.cleanup.max_point_growth_ratio),
@@ -785,7 +822,7 @@ def _candidate_dict(candidate: Any) -> dict[str, Any]:
 
 
 def _candidate_edit_bound(candidate: Any) -> float:
-    """Return the maximum configured local edit radius for compact full builds."""
+    """Return a conservative source-boundary deviation for compact full builds."""
 
     geometry = candidate.geometry
     if candidate.kind in {"terminal", "spur"}:
@@ -793,6 +830,22 @@ def _candidate_edit_bound(candidate: Any) -> float:
             float(geometry.get("shaft_width", 0.0)) / 2.0,
             float(geometry.get("flare_depth", 0.0)),
         )
+    trim_distance = float(geometry.get("trim_distance", 0.0))
+    interior_angle = float(geometry.get("interior_angle_deg", 0.0))
+    if not 0.0 < interior_angle < 180.0:
+        return max(float(geometry.get("radius", 0.0)), trim_distance)
+    # The replacement quadratic runs from equally trimmed points with the
+    # original corner as its control. Its farthest source-boundary deviation
+    # is the corner-to-midpoint distance, not the much longer trim distance.
+    return trim_distance * math.cos(math.radians(interior_angle) / 2.0) / 2.0
+
+
+def _candidate_screening_bound(candidate: Any) -> float:
+    """Flag edits whose serialized source-relative deviation needs sampling."""
+
+    if candidate.kind in {"terminal", "spur"}:
+        return _candidate_edit_bound(candidate)
+    geometry = candidate.geometry
     return max(
         float(geometry.get("radius", 0.0)),
         float(geometry.get("trim_distance", 0.0)),
