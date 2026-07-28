@@ -10,6 +10,7 @@ from kumamaru.filters.terminal_rounding import (
 )
 from kumamaru.geometry.contour import validate_outline
 from kumamaru.model import (
+    Candidate,
     Contour,
     GlyphOutline,
     LineSegment,
@@ -149,6 +150,13 @@ def test_quadratic_sided_cap_is_detected_and_rounded() -> None:
 def test_auto_rounding_selects_normal_caps_but_not_flares() -> None:
     normal = _outline([(0, 0), (100, 0), (100, 400), (0, 400)])
     candidates = analyze_terminal_candidates(normal, TerminalConfig(), upm=1000).candidates
+    assert {
+        (
+            candidate.geometry["join_a_type"],
+            candidate.geometry["join_b_type"],
+        )
+        for candidate in candidates
+    } == {("outer", "outer")}
     assert auto_round_cap_candidate_ids(candidates, TerminalConfig()) == {
         candidate.candidate_id for candidate in candidates
     }
@@ -183,6 +191,41 @@ def test_auto_rounding_accepts_slightly_slanted_cap() -> None:
     assert slanted.candidate_id in auto_round_cap_candidate_ids(candidates, TerminalConfig())
 
 
+def test_auto_rounding_accepts_short_narrow_curved_terminal() -> None:
+    contour = Contour(
+        [
+            QuadraticSegment(Point(0, 80), Point(0, 40), Point(0, 0)),
+            LineSegment(Point(0, 0), Point(55, 0)),
+            QuadraticSegment(Point(55, 0), Point(55, 40), Point(55, 80)),
+            LineSegment(Point(55, 80), Point(0, 80)),
+        ],
+        True,
+        0,
+    )
+    candidates = analyze_terminal_candidates(
+        GlyphOutline("short-curved-terminal", [contour], 200),
+        TerminalConfig(),
+        upm=1000,
+    ).candidates
+    bottom = next(candidate for candidate in candidates if candidate.direction == "down")
+
+    assert 1.15 <= float(bottom.geometry["shaft_aspect_ratio"]) < 2.0
+    assert bottom.candidate_id in auto_round_cap_candidate_ids(candidates, TerminalConfig())
+
+
+def test_auto_rounding_accepts_short_narrow_line_terminal() -> None:
+    outline = _outline([(0, 0), (55, 0), (55, 80), (0, 80)])
+    candidates = analyze_terminal_candidates(outline, TerminalConfig(), upm=1000).candidates
+
+    assert candidates
+    assert all(
+        1.25 <= float(candidate.geometry["shaft_aspect_ratio"]) < 2.0 for candidate in candidates
+    )
+    assert auto_round_cap_candidate_ids(candidates, TerminalConfig()) == {
+        candidate.candidate_id for candidate in candidates
+    }
+
+
 def test_auto_rounding_rejects_box_like_and_nested_counter_candidates() -> None:
     box = _outline([(0, 0), (300, 0), (300, 400), (0, 400)])
     square_candidates = analyze_terminal_candidates(box, TerminalConfig(), upm=1000).candidates
@@ -214,6 +257,34 @@ def test_auto_rounding_rejects_box_like_and_nested_counter_candidates() -> None:
     ).candidates
     assert thick_candidates
     assert not auto_round_cap_candidate_ids(thick_candidates, TerminalConfig())
+
+
+def test_auto_rounding_rejects_inner_join_that_only_looks_like_a_cap() -> None:
+    candidate = Candidate(
+        candidate_id="terminal-inner-join",
+        kind="terminal",
+        glyph_name="junction",
+        contour_index=0,
+        segment_start=1,
+        segment_end=1,
+        direction="up",
+        confidence=1.0,
+        reason="test",
+        point=Point(50, 50),
+        geometry={
+            "flare_ratio": 1.0,
+            "shaft_aspect_ratio": 4.0,
+            "shaft_width_em": 0.05,
+            "flare_depth_em": 0.0,
+            "nesting_depth": 0,
+            "join_a_type": "inner",
+            "join_b_type": "inner",
+            "side_a_type": "line",
+            "side_b_type": "line",
+        },
+    )
+
+    assert not auto_round_cap_candidate_ids([candidate], TerminalConfig())
 
 
 def test_unknown_candidate_is_not_silently_ignored() -> None:

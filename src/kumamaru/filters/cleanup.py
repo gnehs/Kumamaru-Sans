@@ -77,7 +77,11 @@ def cleanup_outline(
         path = pathops.Path()
         _draw_outline(outline, path.getPen())
         simplified = pathops.Path(path)
-        simplified.simplify(fix_winding=True, keep_starting_points=True)
+        simplified.simplify(
+            fix_winding=True,
+            keep_starting_points=True,
+            clockwise=True,
+        )
         collector = OutlinePen()
         simplified.draw(collector)
         cleaned = GlyphOutline(outline.glyph_name, collector.contours, outline.width)

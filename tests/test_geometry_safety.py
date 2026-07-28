@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from kumamaru.geometry.safety import symmetric_boundary_deviation, topology_signature
-from kumamaru.model import Contour, GlyphOutline, LineSegment, Point
+from kumamaru.model import Candidate, Contour, GlyphOutline, LineSegment, Point
+from kumamaru.pipeline import _candidate_edit_bound
 
 
 def _rectangle(
@@ -68,3 +69,21 @@ def test_boundary_deviation_is_independent_of_line_segmentation() -> None:
     assert symmetric_boundary_deviation(
         before, after, subdivisions=2, max_samples=4
     ) == pytest.approx(0)
+
+
+def test_corner_candidate_bound_includes_acute_trim_distance() -> None:
+    candidate = Candidate(
+        candidate_id="corner-acute",
+        kind="corner",
+        glyph_name="star",
+        contour_index=0,
+        segment_start=0,
+        segment_end=1,
+        direction="up",
+        confidence=1.0,
+        reason="test",
+        point=Point(0, 0),
+        geometry={"radius": 70.0, "trim_distance": 113.0},
+    )
+
+    assert _candidate_edit_bound(candidate) == 113.0

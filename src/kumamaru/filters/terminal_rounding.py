@@ -15,6 +15,7 @@ from kumamaru.filters.corner_rounding import (
 )
 from kumamaru.geometry.contour import clone_outline, validate_outline
 from kumamaru.geometry.vectors import (
+    cross,
     direction_name,
     distance,
     dot,
@@ -24,7 +25,11 @@ from kumamaru.geometry.vectors import (
     scale,
     subtract,
 )
-from kumamaru.geometry.winding import contour_nesting_depths, point_in_contour
+from kumamaru.geometry.winding import (
+    contour_nesting_depths,
+    orientation,
+    point_in_contour,
+)
 from kumamaru.model import (
     Candidate,
     Contour,
@@ -55,6 +60,25 @@ def _line_points(segments: list[LineSegment | QuadraticSegment], indices: list[i
     if not all(isinstance(segment, LineSegment) for segment in chain):
         return []
     return [chain[0].start, *(segment.end for segment in chain)]
+
+
+def _join_corner_type(
+    contour: Contour,
+    previous_index: int,
+    next_index: int,
+    nesting_depth: int,
+) -> str:
+    """Classify one contour join relative to the filled glyph region."""
+
+    unit_in = normalize(_incoming_vector(contour.segments[previous_index]))
+    unit_out = normalize(_outgoing_vector(contour.segments[next_index]))
+    contour_orientation = orientation(contour)
+    if unit_in is None or unit_out is None or contour_orientation == 0:
+        return "unknown"
+    turn = math.degrees(math.atan2(cross(unit_in, unit_out), dot(unit_in, unit_out)))
+    local_convex = contour_orientation * turn > 0
+    is_hole = nesting_depth % 2 == 1
+    return "outer" if local_convex != is_hole else "inner"
 
 
 def analyze_terminal_candidates(
@@ -152,6 +176,19 @@ def analyze_terminal_candidates(
                 flare_depth = max(0.0, max(depths))
                 extreme_index = max(range(len(chain_points)), key=lambda index: depths[index])
                 extreme = chain_points[extreme_index]
+                nesting_depth = nesting_depths.get(contour.source_contour_index, 0)
+                join_a_type = _join_corner_type(
+                    contour,
+                    side_a_index,
+                    chain_indices[0],
+                    nesting_depth,
+                )
+                join_b_type = _join_corner_type(
+                    contour,
+                    chain_indices[-1],
+                    side_b_index,
+                    nesting_depth,
+                )
                 # A cap chain should not dive materially behind its two shaft anchors.
                 direction_consistency = sum(
                     depth >= -max(1.0, shaft_width * 0.1) for depth in depths
@@ -190,7 +227,9 @@ def analyze_terminal_candidates(
                     "base_a_y": round(base_a.y, 6),
                     "base_b_x": round(base_b.x, 6),
                     "base_b_y": round(base_b.y, 6),
-                    "nesting_depth": nesting_depths.get(contour.source_contour_index, 0),
+                    "nesting_depth": nesting_depth,
+                    "join_a_type": join_a_type,
+                    "join_b_type": join_b_type,
                     "contains_contour": int(
                         any(
                             other.segments and point_in_contour(other.segments[0].start, contour)
@@ -401,18 +440,47 @@ def auto_round_cap_candidate_ids(
 
     if not bool(setting(config, "enabled", True)) or not bool(setting(config, "round_cap", True)):
         return set()
-    return {
-        candidate.candidate_id
-        for candidate in candidates
-        if candidate.kind == "terminal"
-        and candidate.confidence >= minimum_confidence
-        and float(candidate.geometry.get("flare_ratio", float("inf"))) < maximum_flare_ratio
-        and float(candidate.geometry.get("shaft_aspect_ratio", 0.0)) >= minimum_shaft_aspect_ratio
-        and float(candidate.geometry.get("shaft_width_em", float("inf"))) <= maximum_shaft_width_em
-        and float(candidate.geometry.get("flare_depth_em", float("inf")))
-        <= maximum_terminal_depth_em
-        and int(candidate.geometry.get("nesting_depth", 1)) % 2 == 0
-    }
+    selected: set[str] = set()
+    for candidate in candidates:
+        geometry = candidate.geometry
+        aspect_ratio = float(geometry.get("shaft_aspect_ratio", 0.0))
+        shaft_width_em = float(geometry.get("shaft_width_em", float("inf")))
+        has_curved_side = (
+            geometry.get("side_a_type") == "quadratic" or geometry.get("side_b_type") == "quadratic"
+        )
+        has_only_line_sides = (
+            geometry.get("side_a_type") == "line" and geometry.get("side_b_type") == "line"
+        )
+        has_exposed_joins = (
+            geometry.get("join_a_type") == "outer" and geometry.get("join_b_type") == "outer"
+        )
+        is_standard_terminal = (
+            candidate.confidence >= minimum_confidence
+            and aspect_ratio >= minimum_shaft_aspect_ratio
+        )
+        is_short_curved_terminal = (
+            candidate.confidence >= 0.75
+            and aspect_ratio >= 1.15
+            and shaft_width_em <= 0.065
+            and has_curved_side
+        )
+        is_short_line_terminal = (
+            candidate.confidence >= 0.98
+            and aspect_ratio >= 1.25
+            and shaft_width_em <= 0.065
+            and has_only_line_sides
+        )
+        if (
+            candidate.kind == "terminal"
+            and has_exposed_joins
+            and (is_standard_terminal or is_short_curved_terminal or is_short_line_terminal)
+            and float(geometry.get("flare_ratio", float("inf"))) < maximum_flare_ratio
+            and shaft_width_em <= maximum_shaft_width_em
+            and float(geometry.get("flare_depth_em", float("inf"))) <= maximum_terminal_depth_em
+            and int(geometry.get("nesting_depth", 1)) % 2 == 0
+        ):
+            selected.add(candidate.candidate_id)
+    return selected
 
 
 round_terminals = apply_terminal_candidates

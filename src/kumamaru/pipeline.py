@@ -793,7 +793,10 @@ def _candidate_edit_bound(candidate: Any) -> float:
             float(geometry.get("shaft_width", 0.0)) / 2.0,
             float(geometry.get("flare_depth", 0.0)),
         )
-    return float(geometry.get("radius", 0.0))
+    return max(
+        float(geometry.get("radius", 0.0)),
+        float(geometry.get("trim_distance", 0.0)),
+    )
 
 
 def _optional_filter_analysis(

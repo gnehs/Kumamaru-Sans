@@ -216,10 +216,7 @@ def _glyph_svg(
     min_y = min(before.bbox[1], after.bbox[1])
     max_x = max(before.bbox[2], after.bbox[2])
     max_y = max(before.bbox[3], after.bbox[3])
-    extent = max(max_x - min_x, max_y - min_y, 1.0)
-    scale = 405.0 / extent
-    baseline = 540.0 - ((min_y + max_y) / 2.0) * scale
-    origin_x = 235.0 - ((min_x + max_x) / 2.0) * scale
+    scale, origin_x, baseline = _proof_placement((min_x, min_y, max_x, max_y))
     panels = (
         (35, "原版", before.paths, "before"),
         (535, "修改版", after.paths, "after"),
@@ -284,6 +281,22 @@ def _glyph_svg(
   ]]></script>
 </svg>
 """
+
+
+def _proof_placement(
+    bbox: tuple[float, float, float, float],
+) -> tuple[float, float, float]:
+    """Return scale and panel-relative origin that visually center a glyph."""
+
+    min_x, min_y, max_x, max_y = bbox
+    extent = max(max_x - min_x, max_y - min_y, 1.0)
+    scale = 405.0 / extent
+    panel_center_x = 430.0 / 2.0
+    panel_center_y = 82.0 + 478.0 / 2.0
+    origin_x = panel_center_x - ((min_x + max_x) / 2.0) * scale
+    # Glyph paths use a negative Y scale, so font-space center is added.
+    baseline = panel_center_y + ((min_y + max_y) / 2.0) * scale
+    return scale, origin_x, baseline
 
 
 def _path_elements(paths: Sequence[str], class_name: str) -> str:

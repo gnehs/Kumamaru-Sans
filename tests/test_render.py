@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from kumamaru.render import _modification_count, _path_elements, render_proof
+from kumamaru.render import (
+    _modification_count,
+    _path_elements,
+    _proof_placement,
+    render_proof,
+)
 from tests.fixtures.synthetic_font import build_synthetic_font
 
 
@@ -55,3 +60,16 @@ def test_compound_fill_path_keeps_all_contours_in_one_fill_shape() -> None:
 
     assert markup.count("<path ") == 1
     assert f'd="{outer}{inner}"' in markup
+
+
+def test_proof_placement_centers_y_flipped_glyph_inside_panel() -> None:
+    scale, origin_x, baseline = _proof_placement((0.0, -200.0, 1000.0, 800.0))
+
+    left = 35.0 + origin_x
+    right = left + 1000.0 * scale
+    top = baseline - 800.0 * scale
+    bottom = baseline - (-200.0) * scale
+
+    assert (left + right) / 2.0 == pytest.approx(35.0 + 430.0 / 2.0)
+    assert (top + bottom) / 2.0 == pytest.approx(82.0 + 478.0 / 2.0)
+    assert 82.0 <= top < bottom <= 560.0

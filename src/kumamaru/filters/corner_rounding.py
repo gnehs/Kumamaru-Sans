@@ -132,6 +132,33 @@ def _outgoing_vector(segment: LineSegment | QuadraticSegment) -> Point:
     return vector if normalize(vector) is not None else subtract(segment.end, segment.start)
 
 
+def _join_corner_type(
+    contour: Contour,
+    next_index: int,
+    *,
+    nesting_depth: int,
+    contour_orientation: int,
+) -> str | None:
+    """Classify a contour join relative to the filled glyph region."""
+
+    count = len(contour.segments)
+    previous = contour.segments[(next_index - 1) % count]
+    following = contour.segments[next_index]
+    unit_in = normalize(_incoming_vector(previous))
+    unit_out = normalize(_outgoing_vector(following))
+    if unit_in is None or unit_out is None or contour_orientation == 0:
+        return None
+    turn = math.degrees(
+        math.atan2(
+            cross(unit_in, unit_out),
+            unit_in.x * unit_out.x + unit_in.y * unit_out.y,
+        )
+    )
+    local_convex = contour_orientation * turn > 0
+    is_hole = nesting_depth % 2 == 1
+    return "outer" if local_convex != is_hole else "inner"
+
+
 @dataclass(frozen=True)
 class _Corner:
     candidate: Candidate
@@ -175,6 +202,16 @@ def _corner_records(
             skipped.append(SkippedItem(contour.source_contour_index, 0, "zero-area contour"))
             continue
         segment_lengths = [_segment_length(segment) for segment in contour.segments]
+        nesting_depth = nesting_depths.get(contour.source_contour_index, 0)
+        join_types = [
+            _join_corner_type(
+                contour,
+                index,
+                nesting_depth=nesting_depth,
+                contour_orientation=contour_orientation,
+            )
+            for index in range(count)
+        ]
         for next_index, following in enumerate(contour.segments):
             previous_index = (next_index - 1) % count
             previous = contour.segments[previous_index]
@@ -225,12 +262,16 @@ def _corner_records(
                     )
                 )
                 continue
-            # orientation*turn > 0 is a locally convex polygon corner.  For a
-            # standard outer contour this is an outer corner; the reverse is an
-            # inner/notch corner.
-            local_convex = contour_orientation * turn > 0
-            is_hole = nesting_depths.get(contour.source_contour_index, 0) % 2 == 1
-            corner_type = "outer" if local_convex != is_hole else "inner"
+            corner_type = join_types[next_index]
+            if corner_type is None:
+                skipped.append(
+                    SkippedItem(
+                        contour.source_contour_index,
+                        next_index,
+                        "cannot classify corner relative to fill",
+                    )
+                )
+                continue
             radius = outer_radius if corner_type == "outer" else inner_radius
             if radius <= 0:
                 skipped.append(
@@ -238,6 +279,21 @@ def _corner_records(
                         contour.source_contour_index,
                         next_index,
                         f"{corner_type} radius is disabled",
+                    )
+                )
+                continue
+            if (
+                corner_type == "outer"
+                and join_types[(next_index - 1) % count] == "inner"
+                and join_types[(next_index + 1) % count] == "inner"
+                and incoming_length <= radius
+                and outgoing_length <= radius
+            ):
+                skipped.append(
+                    SkippedItem(
+                        contour.source_contour_index,
+                        next_index,
+                        "structural junction shoulder between inner corners",
                     )
                 )
                 continue
@@ -271,7 +327,7 @@ def _corner_records(
                 "interior_angle_deg": round(interior_angle, 6),
                 "signed_turn_deg": round(turn, 6),
                 "orientation": contour_orientation,
-                "nesting_depth": nesting_depths.get(contour.source_contour_index, 0),
+                "nesting_depth": nesting_depth,
                 "corner_type": corner_type,
                 "radius": round(radius, 6),
                 "trim_distance": round(trim, 6),

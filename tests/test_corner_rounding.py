@@ -12,6 +12,7 @@ from kumamaru.filters.corner_rounding import (
 )
 from kumamaru.geometry.contour import OutlinePen, outline_to_glyph, validate_outline
 from kumamaru.geometry.vectors import cross, subtract
+from kumamaru.geometry.winding import orientation
 from kumamaru.model import (
     Contour,
     GlyphOutline,
@@ -78,6 +79,117 @@ def test_concave_notch_uses_inner_radius() -> None:
     assert len(outer) == 6
     assert {item.geometry["radius"] for item in inner} == {8.0}
     assert {item.geometry["radius"] for item in outer} == {24.0}
+
+
+def test_disabled_inner_radius_preserves_structural_intersections() -> None:
+    outline = _outline(
+        [
+            (40, 0),
+            (60, 0),
+            (60, 40),
+            (100, 40),
+            (100, 60),
+            (60, 60),
+            (60, 100),
+            (40, 100),
+            (40, 60),
+            (0, 60),
+            (0, 40),
+            (40, 40),
+        ]
+    )
+    result = round_line_corners(
+        outline,
+        RoundingConfig(outer_radius_em=0.01, inner_radius_em=0.0),
+        upm=1000,
+    )
+
+    assert result.candidates
+    assert {candidate.geometry["corner_type"] for candidate in result.candidates} == {"outer"}
+    original_inner_points = {Point(40, 40), Point(60, 40), Point(60, 60), Point(40, 60)}
+    rebuilt_points = {
+        point
+        for segment in result.outline.contours[0].segments
+        for point in (segment.start, segment.end)
+    }
+    assert original_inner_points <= rebuilt_points
+
+
+def test_acute_only_policy_preserves_right_angle_structural_junctions() -> None:
+    outline = _outline(
+        [
+            (40, 0),
+            (60, 0),
+            (60, 40),
+            (100, 40),
+            (100, 60),
+            (60, 60),
+            (60, 100),
+            (40, 100),
+            (40, 60),
+            (0, 60),
+            (0, 40),
+            (40, 40),
+        ]
+    )
+    result = round_line_corners(
+        outline,
+        RoundingConfig(
+            outer_radius_em=0.01,
+            inner_radius_em=0.0,
+            max_interior_angle_deg=75.0,
+        ),
+        upm=1000,
+    )
+
+    assert not result.candidates
+    assert result.outline == outline
+
+
+def test_acute_only_policy_rounds_exposed_acute_tip() -> None:
+    outline = _outline([(0, 0), (100, 0), (50, 120)])
+    result = round_line_corners(
+        outline,
+        RoundingConfig(
+            outer_radius_em=0.01,
+            inner_radius_em=0.0,
+            max_interior_angle_deg=75.0,
+        ),
+        upm=1000,
+    )
+
+    assert result.candidates
+    assert all(
+        float(candidate.geometry["interior_angle_deg"]) <= 75.0 for candidate in result.candidates
+    )
+
+
+def test_outer_rounding_skips_short_shoulder_between_inner_corners() -> None:
+    outline = _outline(
+        [
+            (0, 0),
+            (0, 100),
+            (40, 100),
+            (45, 90),
+            (50, 100),
+            (55, 90),
+            (60, 100),
+            (100, 100),
+            (100, 0),
+        ]
+    )
+    result = analyze_corner_candidates(
+        outline,
+        RoundingConfig(outer_radius_em=0.02, inner_radius_em=0.0),
+        upm=1000,
+    )
+
+    assert Point(50, 100) not in {candidate.point for candidate in result.candidates}
+    assert any(
+        item.segment_index == 4
+        and item.reason == "structural junction shoulder between inner corners"
+        for item in result.skipped
+    )
 
 
 def test_hole_contour_corners_are_inner_relative_to_fill() -> None:
@@ -200,3 +312,4 @@ def test_cleanup_accepts_a_simple_valid_outline() -> None:
     result = cleanup_outline(outline, CleanupConfig(), upm=1000)
     assert not result.warnings
     assert not validate_outline(result.outline)
+    assert orientation(result.outline.contours[0]) == -1

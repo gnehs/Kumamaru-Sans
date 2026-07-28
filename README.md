@@ -2,6 +2,9 @@
 
 熊丸體是以 IBM Plex Sans TC 為上游的保守、可稽核字型改造工具鏈。它只圓化明確的角與經確認的收筆，並盡量保存字面、骨架、度量與 OpenType 排版行為；不是全域模糊或圓角化工具。
 
+外露筆端、外輪廓角與尖銳筆尖會圓化；筆畫交匯形成的內角與短肩則保持原樣，
+避免十字與接筆被誤改成圓洞，同時保留一般 90° 外角的圓角。
+
 目前只有 **Regular 靜態 TrueType（`glyf`）MVP**。完整 build 會處理 best
 cmap 中每個不重複的 encoded glyph，並可由版本 tag 自動建立 GitHub Release；
 不支援 OTF/CFF、Variable Font 或自動 hinting。所有輸出仍須逐字人工校對，
