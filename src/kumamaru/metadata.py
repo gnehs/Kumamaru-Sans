@@ -76,7 +76,7 @@ def _set_records(
     name_table = font["name"]
     name_table.setName(english, name_id, *WINDOWS_ENGLISH)
     name_table.setName(traditional_chinese or english, name_id, *WINDOWS_ZH_TW)
-    name_table.setName(english, name_id, *UNICODE_RECORD)
+    name_table.setName(traditional_chinese or english, name_id, *UNICODE_RECORD)
 
 
 def read_metadata(font: TTFont) -> dict[str, Any]:

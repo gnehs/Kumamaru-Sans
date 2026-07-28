@@ -35,6 +35,11 @@ def test_apply_metadata_renames_and_localizes_without_losing_attribution(
         assert name.getName(1, 3, 1, 0x0409).toUnicode() == "Kumamaru Sans"
         assert name.getName(1, 3, 1, 0x0404).toUnicode() == "熊丸體"
         assert name.getName(16, 3, 1, 0x0404).toUnicode() == "熊丸體"
+        assert name.getName(1, 0, 4, 0).toUnicode() == "熊丸體"
+        assert name.getName(4, 0, 4, 0).toUnicode() == "熊丸體 Regular"
+        assert name.getName(16, 0, 4, 0).toUnicode() == "熊丸體"
+        assert name.getName(1, 1, 0, 0) is None
+        assert name.getName(1, 1, 2, 19) is None
         assert name.getName(6, 3, 1, 0x0409).toUnicode() == "KumamaruSans-Regular"
         assert "Copyright Example Upstream." in name.getName(0, 3, 1, 0x0409).toUnicode()
         assert rebuilt["OS/2"].achVendID == "KUMA"
