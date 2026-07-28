@@ -1,0 +1,218 @@
+name: Build font and release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "*.*.*"
+
+concurrency:
+  group: font-build-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  IBM_PLEX_VERSION: "1.1.1"
+  IBM_PLEX_ARCHIVE_SHA256: "b79600d3c9155fa05c9024eb81cfe2fbdd8cd068503dfafd79405ea577aa9fec"
+  IBM_PLEX_TTF_SHA256: "654677156ffc9ba35503ff569a4d55bc7044501f055bd7752a404445ed31cee7"
+  IBM_PLEX_ARCHIVE: .cache/ibm-plex-sans-tc/ibm-plex-sans-tc-1.1.1.zip
+  UPSTREAM_FONT: vendor/IBMPlexSansTC-Regular.ttf
+
+jobs:
+  build:
+    name: Build and validate Regular TTF
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Verify source and tag versions
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          PROJECT_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          MODULE_VERSION="$(python -c 'import kumamaru; print(kumamaru.__version__)')"
+          CONFIG_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("config/regular.toml", "rb"))["font"]["version"])')"
+          [[ "${PROJECT_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "${PROJECT_VERSION}" = "${MODULE_VERSION}"
+          test "${PROJECT_VERSION}" = "${CONFIG_VERSION}"
+          if [ -n "${RELEASE_TAG}" ]; then
+            test "${RELEASE_TAG}" = "${PROJECT_VERSION}"
+          fi
+          echo "VERSION=${PROJECT_VERSION}" >> "${GITHUB_ENV}"
+
+      - name: Lint and run tests
+        run: |
+          make lint
+          make test
+
+      - name: Restore pinned IBM Plex Sans TC archive
+        uses: actions/cache@v4
+        with:
+          path: .cache/ibm-plex-sans-tc
+          key: ibm-plex-sans-tc-${{ env.IBM_PLEX_VERSION }}-${{ env.IBM_PLEX_ARCHIVE_SHA256 }}
+
+      - name: Download and verify official upstream font
+        run: |
+          mkdir -p "$(dirname "${IBM_PLEX_ARCHIVE}")" vendor
+          if [ ! -s "${IBM_PLEX_ARCHIVE}" ]; then
+            curl --fail --location --retry 3 --output "${IBM_PLEX_ARCHIVE}" \
+              "https://github.com/IBM/plex/releases/download/%40ibm/plex-sans-tc%401.1.1/ibm-plex-sans-tc.zip"
+          fi
+          echo "${IBM_PLEX_ARCHIVE_SHA256}  ${IBM_PLEX_ARCHIVE}" | sha256sum --check -
+          unzip -jo "${IBM_PLEX_ARCHIVE}" \
+            "ibm-plex-sans-tc/fonts/complete/ttf/hinted/IBMPlexSansTC-Regular.ttf" \
+            -d vendor
+          test -s "${UPSTREAM_FONT}"
+          echo "${IBM_PLEX_TTF_SHA256}  ${UPSTREAM_FONT}" | sha256sum --check -
+
+      - name: Inspect and analyze upstream font
+        run: |
+          kumamaru inspect \
+            --input "${UPSTREAM_FONT}" \
+            --glyphs config/glyphsets/smoke.txt \
+            --output build/inspection.json
+          kumamaru analyze \
+            --input "${UPSTREAM_FONT}" \
+            --glyphs config/glyphsets/smoke.txt \
+            --config config/regular.toml \
+            --output build/analysis.json
+
+      - name: Build font with strict upstream verification
+        run: |
+          kumamaru build \
+            --input "${UPSTREAM_FONT}" \
+            --output build/KumamaruSans-Regular.ttf \
+            --all-encoded-glyphs \
+            --config config/regular.toml \
+            --overrides config/overrides.yaml \
+            --report build/build-report.json \
+            --strict-upstream-sha \
+            --strict-overrides
+          test -s build/KumamaruSans-Regular.ttf
+          test -s build/build-report.json
+
+      - name: Generate proof and validate output
+        run: |
+          kumamaru proof \
+            --before "${UPSTREAM_FONT}" \
+            --after build/KumamaruSans-Regular.ttf \
+            --glyphs config/glyphsets/smoke.txt \
+            --analysis build/analysis.json \
+            --build-report build/build-report.json \
+            --output build/proof
+          kumamaru validate \
+            --before "${UPSTREAM_FONT}" \
+            --after build/KumamaruSans-Regular.ttf \
+            --all-encoded-glyphs \
+            --output build/validation.json
+          test -s build/proof/index.html
+          test -s build/validation.json
+
+      - name: Verify generated font metadata
+        run: |
+          python -c '
+          from fontTools.ttLib import TTFont
+          import os
+          font = TTFont("build/KumamaruSans-Regular.ttf", lazy=False)
+          names = font["name"]
+          assert names.getBestFamilyName() == "Kumamaru Sans"
+          assert names.getDebugName(5) == "Version " + os.environ["VERSION"]
+          assert names.getDebugName(6) == "KumamaruSans-Regular"
+          assert all("Plex" not in (names.getDebugName(name_id) or "") for name_id in (1, 3, 4, 6, 16))
+          '
+
+      - name: Run FontBakery universal profile
+        id: fontbakery
+        continue-on-error: true
+        run: make fontbakery
+
+      - name: Require FontBakery report
+        run: test -s build/fontbakery.json
+
+      - name: Package release assets
+        run: |
+          PACKAGE_DIR="dist/KumamaruSans-${VERSION}"
+          mkdir -p "${PACKAGE_DIR}"
+          cp build/KumamaruSans-Regular.ttf "${PACKAGE_DIR}/"
+          cp build/inspection.json build/analysis.json build/build-report.json \
+            build/validation.json build/fontbakery.json "${PACKAGE_DIR}/"
+          cp README.md "${PACKAGE_DIR}/"
+          cp LICENSES/OFL-1.1.txt LICENSES/UPSTREAM.md "${PACKAGE_DIR}/"
+          (
+            cd "${PACKAGE_DIR}"
+            sha256sum KumamaruSans-Regular.ttf *.json > SHA256SUMS
+          )
+          (
+            cd dist
+            zip -r "KumamaruSans-${VERSION}.zip" "KumamaruSans-${VERSION}"
+            cp "KumamaruSans-${VERSION}/KumamaruSans-Regular.ttf" .
+            sha256sum KumamaruSans-Regular.ttf "KumamaruSans-${VERSION}.zip" > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kumamaru-sans-build
+          path: |
+            dist/KumamaruSans-Regular.ttf
+            dist/KumamaruSans-*.zip
+            dist/SHA256SUMS
+            dist/KumamaruSans-*/inspection.json
+            dist/KumamaruSans-*/analysis.json
+            dist/KumamaruSans-*/build-report.json
+            dist/KumamaruSans-*/validation.json
+            dist/KumamaruSans-*/fontbakery.json
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kumamaru-sans-build
+          path: release
+
+      - name: Publish release for the existing tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -s release/KumamaruSans-Regular.ttf
+          test -s "release/KumamaruSans-${GITHUB_REF_NAME}.zip"
+          test -s release/SHA256SUMS
+          gh release create "${GITHUB_REF_NAME}" \
+            release/KumamaruSans-Regular.ttf \
+            "release/KumamaruSans-${GITHUB_REF_NAME}.zip" \
+            release/SHA256SUMS \
+            --verify-tag \
+            --generate-notes \
+            --title "Kumamaru Sans ${GITHUB_REF_NAME}"

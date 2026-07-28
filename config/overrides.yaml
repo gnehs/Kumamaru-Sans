@@ -1,0 +1,13 @@
+glyphs:
+  U+5FC3:
+    disable_spur_removal: true
+  U+6C34:
+    disable_spur_removal: true
+
+# After running `kumamaru analyze`, copy a candidate_id into an explicit
+# operation such as:
+# U+500B:
+#   skip: false
+#   operations:
+#     - type: apply_terminal_candidate
+#       candidate_id: "terminal-..."

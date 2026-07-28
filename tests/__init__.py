@@ -1,0 +1,1 @@
+"""Kumamaru test suite."""

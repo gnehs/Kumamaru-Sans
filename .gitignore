@@ -1,0 +1,35 @@
+# User-supplied upstream font binaries. Keep vendor/.gitkeep.
+/vendor/*
+!/vendor/.gitkeep
+*.ttf
+*.otf
+*.woff
+*.woff2
+
+# Reproducible build and proof output.
+/build/
+/dist/
+/.cache/
+
+# Python bytecode, environments, and tool caches.
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.egg-info/
+
+# Local editor and OS noise.
+.DS_Store
+.idea/
+.vscode/

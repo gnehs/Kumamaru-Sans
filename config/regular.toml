@@ -1,0 +1,48 @@
+[font]
+family_name = "Kumamaru Sans"
+family_name_zh_hant = "熊丸體"
+style_name = "Regular"
+version = "0.1.0"
+vendor_id = "KUMA"
+strict_upstream_sha = false
+upstream_sha256 = "654677156ffc9ba35503ff569a4d55bc7044501f055bd7752a404445ed31cee7"
+copyright_notice = "Copyright 2018 IBM Corp. All rights reserved."
+modification_notice = "Modified by the Kumamaru Sans project; not endorsed by IBM."
+license_description = "This Font Software is licensed under the SIL Open Font License, Version 1.1."
+license_url = "https://openfontlicense.org"
+
+[rounding]
+enabled = true
+outer_radius_em = 0.07
+inner_radius_em = 0.025
+min_interior_angle_deg = 25.0
+max_interior_angle_deg = 165.0
+max_trim_segment_ratio = 0.48
+min_segment_length_em = 0.008
+collinear_tolerance_deg = 4.0
+
+[terminal]
+enabled = true
+parallel_tolerance_deg = 12.0
+perpendicular_tolerance_deg = 18.0
+min_side_length_em = 0.045
+max_cap_chain_length = 5
+round_cap = true
+
+[spur_detection]
+enabled = true
+report_only = true
+min_flare_ratio = 1.12
+max_flare_depth_em = 0.055
+min_confidence_to_auto_apply = 0.98
+
+[cleanup]
+enabled = true
+max_point_growth_ratio = 3.0
+max_bbox_change_em = 0.08
+fail_on_self_intersection = true
+
+[build]
+strip_hinting = true
+remove_dsig = true
+fail_on_glyph_error = true

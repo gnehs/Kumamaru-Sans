@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kumamaru"
+version = "0.1.0"
+description = "A conservative, auditable IBM Plex Sans TC outline transformation toolchain"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Kumamaru Sans contributors" }]
+dependencies = [
+  "fonttools>=4.59,<5",
+  "PyYAML>=6.0,<7",
+  "skia-pathops>=0.8.0,<1",
+  "uharfbuzz>=0.52,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "fontbakery>=1.0.0,<2",
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<10",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+  "types-PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+kumamaru = "kumamaru.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "integration: requires the official upstream font in vendor/",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["kumamaru"]
