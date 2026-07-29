@@ -9,20 +9,19 @@
 
 ## 下載預覽字型（GitHub Actions）
 
-正式 Release 尚未穩定釋出時，可從 CI 的 build artifact 取得最新預覽檔：
+正式 Release 尚未穩定釋出時，可從 build artifact 取得最新預覽檔。  
+`main` 每次 push、PR，以及手動 **Run workflow** 都會建置字型：
 
 1. 開啟 [Actions → Build font and release](https://github.com/gnehs/Kumamaru-Sans/actions/workflows/build-release.yml)
-2. 點選最新一次 **成功（綠色 ✓）** 的 run
-3. 頁面底部 **Artifacts** 下載 build artifact（通常保留約 30 天）
+2. 點選最新一次 **成功（綠色 ✓）** 的 run（確認對應 commit）
+3. 頁面底部 **Artifacts** 下載 `kumamaru-sans-build`（通常保留約 30 天）
 4. 解壓後取得 `KumamaruSans-Regular.ttf` 等產物
 
 注意：
 
 - 下載 artifact 需要登入 GitHub，且你必須能存取此 repository
 - Artifact 是自動化產物，**尚未等同人工校對完成的正式版**
-- 若推送了版本 tag（例如 `0.2.3`）且 build 通過，也會在 [Releases](https://github.com/gnehs/Kumamaru-Sans/releases) 提供 TTF／zip／`SHA256SUMS`
-
-也可在 Actions 頁面以 **Run workflow** 手動觸發建置。
+- 推送版本 tag（例如 `0.2.3`）且 build 通過時，另於 [Releases](https://github.com/gnehs/Kumamaru-Sans/releases) 提供 TTF／zip／`SHA256SUMS`
 
 ## 授權與名稱
 
