@@ -87,6 +87,74 @@ kumamaru validate --before vendor/IBMPlexSansTC-Regular.ttf \
 
 缺少上游字型時，相依的 smoke／integration 應跳過，不應下載替代字型。
 
+### 多字重 Glyphs source prototype
+
+IBM 在
+[`@ibm/plex-sans-tc@1.1.1` release](https://github.com/IBM/plex/releases/tag/%40ibm/plex-sans-tc%401.1.1)
+另附可編輯的 `sources.zip`。這條研究流程以其中的三個 master
+（Thin／Regular／Bold）同步修改輪廓，避免把各字重獨立圓角後破壞插值相容性。
+
+先安裝 source 額外依賴：
+
+```bash
+python -m pip install -e '.[source,dev]'
+```
+
+將官方壓縮檔解到下列預設位置；完整來源與衍生 `.glyphs` 都不納入版本控制：
+
+```text
+vendor/ibm-plex-sans-tc/sources/masters/IBM Plex Sans TC.glyphs
+```
+
+先用小字集快速檢查，再執行正式全字庫轉換：
+
+```bash
+# 檢查官方 source 身分、masters 與所選 glyph 的拓撲相容性
+make source-inspect PYTHON=.venv/bin/python
+
+# 對 smoke glyphs 在三個 masters 同步加入 cubic 圓角
+make source-round-smoke PYTHON=.venv/bin/python
+
+# 對全部 exporting glyphs 執行正式轉換
+make source-round PYTHON=.venv/bin/python
+
+# 用 fontmake 編出 Thin／Regular／Bold master TTF，供 proof 與差異研究
+make source-build-masters PYTHON=.venv/bin/python
+
+# 從三個 masters 內插並編出 8 個正式 instance
+make source-build-instances PYTHON=.venv/bin/python
+
+# 從同一組 masters 編出連續的 wght 100–700 Variable Font
+make source-build-variable PYTHON=.venv/bin/python
+```
+
+Variable Font 會輸出到
+`build/source/variable-ttf/KumamaruSans[wght].ttf`，預設位置為 Regular 400，
+並保留 Thin、ExtraLight、Light、Regular、Text、Medium、SemiBold、Bold
+八個 named instances。
+
+也可直接使用 CLI，為各 master 指定以 font units 表示的半徑：
+
+```bash
+kumamaru source-round \
+  --input 'vendor/ibm-plex-sans-tc/sources/masters/IBM Plex Sans TC.glyphs' \
+  --output 'build/source/Kumamaru Sans.glyphs' \
+  --all-glyphs \
+  --radius Thin=28 --radius Regular=48 --radius Bold=68 \
+  --inner-radius Thin=18 --inner-radius Regular=32 --inner-radius Bold=46 \
+  --normalize-ibm-plex-sans-tc \
+  --report build/source/rounding-report.json
+```
+
+此功能目前是研究 prototype：
+
+- 處理封閉輪廓上、跨所有 masters 拓撲一致的黑色外角、白色 counter 內角，以及通過幾何安全門檻的平切筆畫端點。
+- 多筆畫交會形成的結構凹角不視為 counter，會保留原形，避免交會處過粗。
+- 任一 master 不安全時，該候選會整組跳過，不會只修改部分字重。
+- 含 bracket layer 的所選 glyph 會整字跳過；後續需實作 bracket-aware 映射。
+- 尚未移植 spur override 與完整 metadata；圓頭 terminal 目前只涵蓋可由單一直線 cap 與兩側 shaft 安全辨識的輪廓。
+- `fontmake` 重編譯的 OpenType tables 不保證與 IBM 發行 TTF 等價，產物不可直接發布。
+
 ### 去腳與鉤的原則
 
 - **「個」等字的去腳**：須從 `analysis.json`／proof 複製真實 `candidate_id` 寫入 `config/overrides.yaml`，不可猜測 ID；重建後用疊圖檢查。

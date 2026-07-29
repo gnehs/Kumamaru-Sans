@@ -4,8 +4,14 @@ BUILD ?= build
 GLYPHS ?= config/glyphsets/smoke.txt
 CONFIG ?= config/regular.toml
 OVERRIDES ?= config/overrides.yaml
+SOURCE ?= vendor/ibm-plex-sans-tc/sources/masters/IBM Plex Sans TC.glyphs
+DERIVED_SOURCE ?= $(BUILD)/source/Kumamaru Sans.glyphs
+SOURCE_REPORT ?= $(BUILD)/source/rounding-report.json
+SMOKE_DERIVED_SOURCE ?= $(BUILD)/source/Kumamaru Sans Smoke.glyphs
+SMOKE_SOURCE_REPORT ?= $(BUILD)/source/smoke-rounding-report.json
+VARIABLE_FONT ?= $(BUILD)/source/variable-ttf/KumamaruSans[wght].ttf
 
-.PHONY: lint test smoke full validate validate-full fontbakery proof
+.PHONY: lint test smoke full validate validate-full fontbakery proof source-inspect source-round source-round-smoke source-build-masters source-build-instances source-build-variable
 
 lint:
 	$(PYTHON) -m ruff format --check src tests
@@ -62,4 +68,55 @@ fontbakery:
 	else \
 		mkdir -p "$(BUILD)"; \
 		$(PYTHON) -m fontbakery check-universal --no-progress --json "$(BUILD)/fontbakery.json" "$(BUILD)/KumamaruSans-Regular.ttf"; \
+	fi
+
+source-inspect:
+	@if [ ! -f "$(SOURCE)" ]; then \
+		echo "skip: missing official upstream Glyphs source: $(SOURCE)"; \
+	else \
+		mkdir -p "$(BUILD)/source"; \
+		$(PYTHON) -m kumamaru.cli source-inspect --input "$(SOURCE)" --glyphs "$(GLYPHS)" --expect-ibm-plex-sans-tc --output "$(BUILD)/source/manifest.json"; \
+	fi
+
+source-round:
+	@if [ ! -f "$(SOURCE)" ]; then \
+		echo "skip: missing official upstream Glyphs source: $(SOURCE)"; \
+	else \
+		mkdir -p "$(BUILD)/source"; \
+		$(PYTHON) -m kumamaru.cli source-round --input "$(SOURCE)" --output "$(DERIVED_SOURCE)" --all-glyphs --report "$(SOURCE_REPORT)" --reference-master Regular --radius Thin=28 --radius Regular=48 --radius Bold=68 --inner-radius Thin=18 --inner-radius Regular=32 --inner-radius Bold=46 --normalize-ibm-plex-sans-tc; \
+	fi
+
+source-round-smoke:
+	@if [ ! -f "$(SOURCE)" ]; then \
+		echo "skip: missing official upstream Glyphs source: $(SOURCE)"; \
+	else \
+		mkdir -p "$(BUILD)/source"; \
+		$(PYTHON) -m kumamaru.cli source-round --input "$(SOURCE)" --output "$(SMOKE_DERIVED_SOURCE)" --glyphs "$(GLYPHS)" --report "$(SMOKE_SOURCE_REPORT)" --reference-master Regular --radius Thin=28 --radius Regular=48 --radius Bold=68 --inner-radius Thin=18 --inner-radius Regular=32 --inner-radius Bold=46 --normalize-ibm-plex-sans-tc; \
+	fi
+
+source-build-masters:
+	@if [ ! -f "$(DERIVED_SOURCE)" ]; then \
+		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
+	else \
+		mkdir -p "$(BUILD)/source/master-ttf"; \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf --output-dir "$(BUILD)/source/master-ttf" --no-production-names --verbose ERROR; \
+		$(PYTHON) -m kumamaru.source_metadata "$(BUILD)/source/master-ttf"; \
+	fi
+
+source-build-instances:
+	@if [ ! -f "$(DERIVED_SOURCE)" ]; then \
+		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
+	else \
+		mkdir -p "$(BUILD)/source/instance-ttf"; \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i --output-dir "$(BUILD)/source/instance-ttf" --no-production-names --verbose ERROR; \
+		$(PYTHON) -m kumamaru.source_metadata "$(BUILD)/source/instance-ttf"; \
+	fi
+
+source-build-variable:
+	@if [ ! -f "$(DERIVED_SOURCE)" ]; then \
+		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
+	else \
+		mkdir -p "$(dir $(VARIABLE_FONT))"; \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o variable --output-path "$(VARIABLE_FONT)" --no-production-names --filter='...' --filter='kumamaru.filters.variable_compatibility::VariableCompatibilityFilter' --verbose ERROR; \
+		$(PYTHON) -m kumamaru.source_metadata "$(VARIABLE_FONT)"; \
 	fi

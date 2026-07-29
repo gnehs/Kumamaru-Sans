@@ -12,10 +12,18 @@ from tests.fixtures.synthetic_font import build_synthetic_font
 ROOT = Path(__file__).parents[1]
 
 
-def test_parser_exposes_exactly_the_five_public_commands() -> None:
+def test_parser_exposes_expected_public_commands() -> None:
     parser = build_parser()
     action = next(action for action in parser._actions if action.dest == "command")
-    assert set(action.choices) == {"inspect", "analyze", "build", "proof", "validate"}
+    assert set(action.choices) == {
+        "inspect",
+        "analyze",
+        "build",
+        "proof",
+        "validate",
+        "source-inspect",
+        "source-round",
+    }
     parsed = parser.parse_args(
         [
             "build",
@@ -37,6 +45,151 @@ def test_parser_exposes_exactly_the_five_public_commands() -> None:
     assert parsed.dry_run is True
     assert parsed.strict_upstream_sha is True
     assert parsed.strict_overrides is True
+
+
+def test_parser_accepts_source_rounding_parameters() -> None:
+    parsed = build_parser().parse_args(
+        [
+            "source-round",
+            "--input",
+            "upstream.glyphs",
+            "--output",
+            "derived.glyphs",
+            "--glyphs",
+            "smoke.txt",
+            "--report",
+            "source-rounding.json",
+            "--radius",
+            "Thin=28",
+            "--radius",
+            "Regular=48",
+            "--radius",
+            "Bold=68",
+            "--inner-radius",
+            "Thin=12",
+            "--inner-radius",
+            "Regular=20",
+            "--normalize-ibm-plex-sans-tc",
+        ]
+    )
+
+    assert parsed.radius == ["Thin=28", "Regular=48", "Bold=68"]
+    assert parsed.inner_radius == ["Thin=12", "Regular=20"]
+    assert parsed.all_glyphs is False
+    assert parsed.normalize_ibm_plex_sans_tc is True
+
+
+def test_source_round_accepts_all_exporting_glyphs() -> None:
+    parsed = build_parser().parse_args(
+        [
+            "source-round",
+            "--input",
+            "upstream.glyphs",
+            "--output",
+            "derived.glyphs",
+            "--all-glyphs",
+            "--report",
+            "source-rounding.json",
+            "--radius",
+            "*=48",
+        ]
+    )
+
+    assert parsed.glyphs is None
+    assert parsed.all_glyphs is True
+    assert parsed.inner_radius is None
+
+
+def test_source_round_glyph_selection_is_required_and_mutually_exclusive(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    common = [
+        "source-round",
+        "--input",
+        "upstream.glyphs",
+        "--output",
+        "derived.glyphs",
+        "--report",
+        "source-rounding.json",
+        "--radius",
+        "*=48",
+    ]
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(common)
+    assert "one of the arguments --glyphs --all-glyphs is required" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args([*common, "--glyphs", "smoke.txt", "--all-glyphs"])
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_source_round_all_glyphs_requests_compact_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_round(*args: object, **kwargs: object) -> dict[str, object]:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return {"summary": {"glyphs_requested": 42}}
+
+    monkeypatch.setattr("kumamaru.cli.round_glyphs_source", fake_round)
+    report = tmp_path / "rounding.json"
+
+    assert (
+        main(
+            [
+                "source-round",
+                "--input",
+                str(tmp_path / "upstream.glyphs"),
+                "--output",
+                str(tmp_path / "derived.glyphs"),
+                "--all-glyphs",
+                "--report",
+                str(report),
+                "--radius",
+                "Regular=48",
+                "--inner-radius",
+                "Regular=20",
+            ]
+        )
+        == 0
+    )
+
+    positional = captured["args"]
+    keywords = captured["kwargs"]
+    assert isinstance(positional, tuple)
+    assert positional[2] is None
+    assert positional[3] == {"Regular": 48.0}
+    assert isinstance(keywords, dict)
+    assert keywords["inner_radii_by_master"] == {"Regular": 20.0}
+    assert keywords["compact_report"] is True
+    assert json.loads(report.read_text(encoding="utf-8"))["summary"]["glyphs_requested"] == 42
+
+
+def test_source_round_reports_invalid_inner_radius_option(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    status = main(
+        [
+            "source-round",
+            "--input",
+            str(tmp_path / "upstream.glyphs"),
+            "--output",
+            str(tmp_path / "derived.glyphs"),
+            "--all-glyphs",
+            "--report",
+            str(tmp_path / "rounding.json"),
+            "--radius",
+            "*=48",
+            "--inner-radius",
+            "Regular",
+        ]
+    )
+
+    assert status == 2
+    assert "invalid --inner-radius" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

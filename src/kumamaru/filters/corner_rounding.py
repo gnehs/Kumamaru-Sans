@@ -272,6 +272,15 @@ def _corner_records(
                     )
                 )
                 continue
+            if corner_type == "inner" and nesting_depth % 2 == 0:
+                skipped.append(
+                    SkippedItem(
+                        contour.source_contour_index,
+                        next_index,
+                        "structural inner corner is not a white counter",
+                    )
+                )
+                continue
             radius = outer_radius if corner_type == "outer" else inner_radius
             if radius <= 0:
                 skipped.append(

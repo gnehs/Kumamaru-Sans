@@ -67,7 +67,7 @@ def test_rounds_clockwise_and_counterclockwise_square(
         assert abs(tangent_cross) > 0
 
 
-def test_concave_notch_uses_inner_radius() -> None:
+def test_concave_notch_is_not_rounded_as_a_white_counter() -> None:
     outline = _outline(
         [(0, 0), (200, 0), (200, 200), (120, 200), (120, 80), (80, 80), (80, 200), (0, 200)]
     )
@@ -75,10 +75,16 @@ def test_concave_notch_uses_inner_radius() -> None:
 
     inner = [item for item in analysis.candidates if item.geometry["corner_type"] == "inner"]
     outer = [item for item in analysis.candidates if item.geometry["corner_type"] == "outer"]
-    assert len(inner) == 2
+    assert inner == []
     assert len(outer) == 6
-    assert {item.geometry["radius"] for item in inner} == {8.0}
     assert {item.geometry["radius"] for item in outer} == {24.0}
+    assert (
+        sum(
+            item.reason == "structural inner corner is not a white counter"
+            for item in analysis.skipped
+        )
+        == 2
+    )
 
 
 def test_disabled_inner_radius_preserves_structural_intersections() -> None:
@@ -113,6 +119,47 @@ def test_disabled_inner_radius_preserves_structural_intersections() -> None:
         for point in (segment.start, segment.end)
     }
     assert original_inner_points <= rebuilt_points
+
+
+def test_enabled_inner_radius_still_preserves_structural_intersections() -> None:
+    outline = _outline(
+        [
+            (40, 0),
+            (60, 0),
+            (60, 40),
+            (100, 40),
+            (100, 60),
+            (60, 60),
+            (60, 100),
+            (40, 100),
+            (40, 60),
+            (0, 60),
+            (0, 40),
+            (40, 40),
+        ]
+    )
+    result = round_line_corners(
+        outline,
+        RoundingConfig(outer_radius_em=0.01, inner_radius_em=0.04),
+        upm=1000,
+    )
+
+    assert result.candidates
+    assert {candidate.geometry["corner_type"] for candidate in result.candidates} == {"outer"}
+    original_inner_points = {Point(40, 40), Point(60, 40), Point(60, 60), Point(40, 60)}
+    rebuilt_points = {
+        point
+        for segment in result.outline.contours[0].segments
+        for point in (segment.start, segment.end)
+    }
+    assert original_inner_points <= rebuilt_points
+    assert (
+        sum(
+            item.reason == "structural inner corner is not a white counter"
+            for item in result.skipped
+        )
+        == 4
+    )
 
 
 def test_acute_only_policy_preserves_right_angle_structural_junctions() -> None:

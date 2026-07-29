@@ -18,6 +18,16 @@ from kumamaru.pipeline import (
     validate_fonts,
     write_report,
 )
+from kumamaru.source_manifest import (
+    SourceManifestError,
+    inspect_glyphs_source,
+    inspect_ibm_plex_sans_tc_source,
+)
+from kumamaru.source_rounding import (
+    SourceRoundingDependencyError,
+    SourceRoundingError,
+    round_glyphs_source,
+)
 
 
 class ValidationFailed(RuntimeError):
@@ -25,7 +35,7 @@ class ValidationFailed(RuntimeError):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build a strict, discoverable parser for the five public commands."""
+    """Build the strict, discoverable command-line parser."""
 
     parser = argparse.ArgumentParser(
         prog="kumamaru",
@@ -85,6 +95,66 @@ def build_parser() -> argparse.ArgumentParser:
     _add_glyph_selection_arguments(validate_command)
     validate_command.add_argument("--output", required=True, type=Path, help="validation JSON path")
     validate_command.set_defaults(handler=_handle_validate)
+
+    source_inspect_command = subcommands.add_parser(
+        "source-inspect",
+        help="inspect Glyphs masters and interpolation compatibility",
+    )
+    source_inspect_command.add_argument("--input", required=True, type=Path)
+    source_inspect_command.add_argument("--output", required=True, type=Path)
+    source_inspect_command.add_argument("--glyphs", type=Path, help="optional glyph set to inspect")
+    source_inspect_command.add_argument(
+        "--expect-ibm-plex-sans-tc",
+        action="store_true",
+        help="require the pinned IBM Plex Sans TC source identity",
+    )
+    source_inspect_command.set_defaults(handler=_handle_source_inspect)
+
+    source_round_command = subcommands.add_parser(
+        "source-round",
+        help="prototype compatible corner rounding across Glyphs masters",
+    )
+    source_round_command.add_argument("--input", required=True, type=Path)
+    source_round_command.add_argument("--output", required=True, type=Path)
+    source_round_selection = source_round_command.add_mutually_exclusive_group(required=True)
+    source_round_selection.add_argument("--glyphs", type=Path, help="glyph set file")
+    source_round_selection.add_argument(
+        "--all-glyphs",
+        action="store_true",
+        help="round every exporting glyph in the Glyphs source",
+    )
+    source_round_command.add_argument("--report", required=True, type=Path)
+    source_round_command.add_argument("--reference-master", default="Regular")
+    source_round_command.add_argument(
+        "--radius",
+        required=True,
+        action="append",
+        metavar="MASTER=UNITS",
+        help="repeat per master, or use '*=UNITS' as a fallback",
+    )
+    source_round_command.add_argument(
+        "--inner-radius",
+        action="append",
+        metavar="MASTER=UNITS",
+        help="optionally repeat per master to round eligible inner corners",
+    )
+    source_round_command.add_argument(
+        "--max-segment-ratio",
+        type=float,
+        default=0.42,
+        help="maximum fraction trimmed from either adjacent segment",
+    )
+    source_round_command.add_argument(
+        "--family-name",
+        default="Kumamaru Sans",
+        help="non-reserved family name written to the derived source",
+    )
+    source_round_command.add_argument(
+        "--normalize-ibm-plex-sans-tc",
+        action="store_true",
+        help="repair the published IBM source's weight-axis mappings before saving",
+    )
+    source_round_command.set_defaults(handler=_handle_source_round)
     return parser
 
 
@@ -98,7 +168,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValidationFailed as exc:
         print(f"{parser.prog}: {exc}", file=sys.stderr)
         return 1
-    except (ConfigError, PipelineError, OSError, ValueError) as exc:
+    except (
+        ConfigError,
+        PipelineError,
+        SourceManifestError,
+        SourceRoundingDependencyError,
+        SourceRoundingError,
+        OSError,
+        ValueError,
+    ) as exc:
         print(f"{parser.prog}: error: {exc}", file=sys.stderr)
         return 2
     return 0
@@ -185,6 +263,60 @@ def _handle_validate(arguments: argparse.Namespace) -> None:
     write_report(arguments.output, report)
     if not bool(report.get("passed", False)):
         raise ValidationFailed(f"validation failed; see {arguments.output}")
+
+
+def _handle_source_inspect(arguments: argparse.Namespace) -> None:
+    glyphs = parse_glyphset(arguments.glyphs) if arguments.glyphs else []
+    inspect = (
+        inspect_ibm_plex_sans_tc_source
+        if arguments.expect_ibm_plex_sans_tc
+        else inspect_glyphs_source
+    )
+    report = inspect(arguments.input, selected_glyphs=glyphs)
+    write_report(arguments.output, report)
+    if arguments.expect_ibm_plex_sans_tc and not bool(report["source_gate"]["passed"]):
+        raise ValidationFailed(f"source identity validation failed; see {arguments.output}")
+
+
+def _parse_master_radii(
+    values: Sequence[str], *, option_name: str = "--radius"
+) -> dict[str, float]:
+    radii: dict[str, float] = {}
+    for value in values:
+        master, separator, raw_radius = value.partition("=")
+        master = master.strip()
+        if not separator or not master or not raw_radius.strip():
+            raise SourceRoundingError(f"invalid {option_name} {value!r}; expected MASTER=UNITS")
+        if master in radii:
+            raise SourceRoundingError(f"duplicate {option_name} for master {master!r}")
+        try:
+            radii[master] = float(raw_radius)
+        except ValueError as exc:
+            raise SourceRoundingError(
+                f"invalid radius value for master {master!r}: {raw_radius!r}"
+            ) from exc
+    return radii
+
+
+def _handle_source_round(arguments: argparse.Namespace) -> None:
+    report = round_glyphs_source(
+        arguments.input,
+        arguments.output,
+        parse_glyphset(arguments.glyphs) if arguments.glyphs else None,
+        _parse_master_radii(arguments.radius),
+        reference_master=arguments.reference_master,
+        max_segment_ratio=arguments.max_segment_ratio,
+        family_name=arguments.family_name,
+        normalize_ibm_plex_sans_tc=arguments.normalize_ibm_plex_sans_tc,
+        all_exporting_glyphs=arguments.all_glyphs,
+        inner_radii_by_master=(
+            _parse_master_radii(arguments.inner_radius, option_name="--inner-radius")
+            if arguments.inner_radius
+            else None
+        ),
+        compact_report=arguments.all_glyphs,
+    )
+    write_report(arguments.report, report)
 
 
 if __name__ == "__main__":

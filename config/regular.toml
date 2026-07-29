@@ -14,7 +14,7 @@ license_url = "https://openfontlicense.org"
 [rounding]
 enabled = true
 outer_radius_em = 0.07
-inner_radius_em = 0.0
+inner_radius_em = 0.04
 min_interior_angle_deg = 25.0
 max_interior_angle_deg = 165.0
 max_trim_segment_ratio = 0.48
