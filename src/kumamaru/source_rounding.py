@@ -58,6 +58,12 @@ class _MasterEdit:
     master_name: str
     path: Any
     node_index: int
+    original_node: Any
+    original_type: str
+    incoming_control_node: Any | None
+    incoming_control: _Point | None
+    outgoing_control_node: Any | None
+    outgoing_control: _Point | None
     before: _Point
     control_1: _Point
     control_2: _Point
@@ -106,10 +112,14 @@ class _TerminalEdit:
 
 _BRACKET_LAYER_NAME = re.compile(r".*[\[\]]\s*\d+\s*\].*")
 _ROUND_CAP_HANDLE = 0.5522847498307936
-_MAX_TERMINAL_PERPENDICULAR_ERROR_DEGREES = 18.0
+_MAX_TERMINAL_PERPENDICULAR_ERROR_DEGREES = 25.0
 _RELAXED_TERMINAL_PERPENDICULAR_ERROR_DEGREES = 20.0
 _RELAXED_TERMINAL_PARALLEL_ERROR_DEGREES = 2.0
 _RELAXED_TERMINAL_MINIMUM_SIDE_RATIO = 2.5
+_MINIMUM_TERMINAL_SIDE_RATIO = 1.05
+_MINIMUM_COMPACT_TERMINAL_SIDE_RATIO = 0.5
+_MINIMUM_CORNER_INTERIOR_DEGREES = 25.0
+_MAXIMUM_CORNER_INTERIOR_DEGREES = 165.0
 
 
 def _xy(node: Any) -> _Point:
@@ -254,14 +264,16 @@ def _is_corner_type(
     if corner_type == "outer":
         return locally_convex != (nesting_depth % 2 == 1)
     if corner_type == "inner":
-        return nesting_depth % 2 == 1 and locally_convex
+        return locally_convex == (nesting_depth % 2 == 1)
     raise AssertionError(f"unsupported corner type: {corner_type}")
 
 
 def _reference_candidates(
     layer: Any,
-    line_type: str,
     *,
+    line: str,
+    curve: str,
+    offcurve: str,
     include_inner: bool,
 ) -> list[_Candidate]:
     paths = list(layer.paths)
@@ -272,8 +284,35 @@ def _reference_candidates(
         if not path.closed or len(nodes) < 3:
             continue
         for node_index, node in enumerate(nodes):
-            following = nodes[(node_index + 1) % len(nodes)]
-            if node.type != line_type or following.type != line_type:
+            if node.type == offcurve:
+                continue
+            incoming = _incoming_side(
+                path,
+                node_index,
+                line=line,
+                curve=curve,
+                offcurve=offcurve,
+            )
+            outgoing = _outgoing_side(
+                path,
+                node_index,
+                line=line,
+                curve=curve,
+                offcurve=offcurve,
+            )
+            if incoming is None or outgoing is None:
+                continue
+            unit_in = _unit(incoming[0])
+            unit_out = _unit(outgoing[0])
+            if unit_in is None or unit_out is None:
+                continue
+            turn = math.degrees(math.atan2(_cross(unit_in, unit_out), _dot(unit_in, unit_out)))
+            interior_angle = 180.0 - abs(turn)
+            if not (
+                _MINIMUM_CORNER_INTERIOR_DEGREES
+                <= interior_angle
+                <= _MAXIMUM_CORNER_INTERIOR_DEGREES
+            ):
                 continue
             if _is_corner_type(
                 path,
@@ -447,29 +486,40 @@ def _terminal_geometry(
             None,
             "terminal cap exceeds the perpendicular safety gate",
         )
-    if min(incoming_length, outgoing_length) < width * 2.0:
-        return None, "terminal shaft sides are shorter than twice the width"
+    minimum_side_length = min(incoming_length, outgoing_length)
+    side_ratio = minimum_side_length / width
+    is_compact_two_cap_stroke = (
+        sum(node.type == line for node in nodes) == 2
+        and side_ratio >= _MINIMUM_COMPACT_TERMINAL_SIDE_RATIO
+    )
+    # A closed stroke may have round caps at both ends. Each normal edit
+    # consumes half the stroke width from each side. Compact dot contours from
+    # the source instead have exactly two LINE caps and cubic sides; those may
+    # use shallower half-side caps so the edits meet without crossing.
+    if side_ratio < _MINIMUM_TERMINAL_SIDE_RATIO and not is_compact_two_cap_stroke:
+        return None, "terminal shaft sides are too short for non-overlapping round caps"
 
-    radius = width / 2.0
-    new_start = _sub(start, _scale(unit_in, radius))
-    new_end = _add(end, _scale(unit_out, radius))
+    cap_depth = min(width / 2.0, minimum_side_length / 2.0)
+    new_start = _sub(start, _scale(unit_in, cap_depth))
+    new_end = _add(end, _scale(unit_out, cap_depth))
     new_width = _sub(new_end, new_start)
     new_width_unit = _unit(new_width)
     if new_width_unit is None:
         return None, "trimmed terminal width is degenerate"
     center = _scale(_add(new_start, new_end), 0.5)
-    apex = _add(center, _scale(outward, radius))
-    handle = radius * _ROUND_CAP_HANDLE
+    apex = _add(center, _scale(outward, cap_depth))
+    depth_handle = cap_depth * _ROUND_CAP_HANDLE
+    width_handle = _length(new_width) / 2.0 * _ROUND_CAP_HANDLE
     start_delta = _sub(new_start, start)
     end_delta = _sub(new_end, end)
     return (
         {
             "start": new_start,
-            "control_1": _add(new_start, _scale(outward, handle)),
-            "control_2": _sub(apex, _scale(new_width_unit, handle)),
+            "control_1": _add(new_start, _scale(outward, depth_handle)),
+            "control_2": _sub(apex, _scale(new_width_unit, width_handle)),
             "apex": apex,
-            "control_3": _add(apex, _scale(new_width_unit, handle)),
-            "control_4": _add(new_end, _scale(outward, handle)),
+            "control_3": _add(apex, _scale(new_width_unit, width_handle)),
+            "control_4": _add(new_end, _scale(outward, depth_handle)),
             "end": new_end,
             "start_control_index": start_control_index,
             "start_control": (
@@ -484,7 +534,7 @@ def _terminal_geometry(
                 else _add(_xy(nodes[end_control_index]), end_delta)
             ),
             "shaft_width": width,
-            "trim_distance": radius,
+            "trim_distance": cap_depth,
         },
         None,
     )
@@ -721,6 +771,10 @@ def _prepare_master_edit(
     candidate: _Candidate,
     radius: float,
     max_segment_ratio: float,
+    *,
+    line: str,
+    curve: str,
+    offcurve: str,
 ) -> tuple[_MasterEdit | None, str | None]:
     reason = _topology_reason(reference_paths, mapped_paths, candidate)
     if reason is not None:
@@ -733,18 +787,34 @@ def _prepare_master_edit(
         corner_type=candidate.corner_type,
     ):
         corner_description = (
-            "black-outer convex" if candidate.corner_type == "outer" else "white-counter convex"
+            "fill-relative outer corner"
+            if candidate.corner_type == "outer"
+            else "fill-relative inner corner"
         )
         return None, f"master {master.name!r}: mapped corner is not {corner_description}"
 
     nodes = list(path.nodes)
-    previous = _xy(nodes[(candidate.node_index - 1) % len(nodes)])
     corner = _xy(nodes[candidate.node_index])
-    following = _xy(nodes[(candidate.node_index + 1) % len(nodes)])
-    toward_corner = _unit(_sub(corner, previous))
-    away_from_corner = _unit(_sub(following, corner))
-    incoming_length = _length(_sub(corner, previous))
-    outgoing_length = _length(_sub(following, corner))
+    incoming = _incoming_side(
+        path,
+        candidate.node_index,
+        line=line,
+        curve=curve,
+        offcurve=offcurve,
+    )
+    outgoing = _outgoing_side(
+        path,
+        candidate.node_index,
+        line=line,
+        curve=curve,
+        offcurve=offcurve,
+    )
+    if incoming is None or outgoing is None:
+        return None, f"master {master.name!r}: adjacent segment is not LINE or cubic"
+    incoming_vector, incoming_length, incoming_control_index = incoming
+    outgoing_vector, outgoing_length, outgoing_control_index = outgoing
+    toward_corner = _unit(incoming_vector)
+    away_from_corner = _unit(outgoing_vector)
     if toward_corner is None or away_from_corner is None:
         return None, f"master {master.name!r}: zero-length adjacent segment"
 
@@ -767,6 +837,8 @@ def _prepare_master_edit(
     handle_length = 4.0 / 3.0 * effective_radius * math.tan(sweep / 4.0)
     control_1 = _add(before, _scale(toward_corner, handle_length))
     control_2 = _sub(after, _scale(away_from_corner, handle_length))
+    before_delta = _sub(before, corner)
+    after_delta = _sub(after, corner)
     coordinates = (before, control_1, control_2, after)
     if not all(math.isfinite(value) for point in coordinates for value in (point.x, point.y)):
         return None, f"master {master.name!r}: generated coordinates are not finite"
@@ -776,6 +848,24 @@ def _prepare_master_edit(
             master_name=master.name,
             path=path,
             node_index=candidate.node_index,
+            original_node=nodes[candidate.node_index],
+            original_type=nodes[candidate.node_index].type,
+            incoming_control_node=(
+                None if incoming_control_index is None else nodes[incoming_control_index]
+            ),
+            incoming_control=(
+                None
+                if incoming_control_index is None
+                else _add(_xy(nodes[incoming_control_index]), before_delta)
+            ),
+            outgoing_control_node=(
+                None if outgoing_control_index is None else nodes[outgoing_control_index]
+            ),
+            outgoing_control=(
+                None
+                if outgoing_control_index is None
+                else _add(_xy(nodes[outgoing_control_index]), after_delta)
+            ),
             before=before,
             control_1=control_1,
             control_2=control_2,
@@ -845,14 +935,30 @@ def _prepare_terminal_edit(
 
 def _apply_edit(edit: _MasterEdit, node_class: Any, line: str, curve: str, offcurve: str) -> None:
     nodes = list(edit.path.nodes)
-    original = nodes[edit.node_index]
+    node_index = next(index for index, node in enumerate(nodes) if node is edit.original_node)
+    original = nodes[node_index]
+    if edit.incoming_control_node is not None and edit.incoming_control is not None:
+        edit.incoming_control_node.position = (
+            edit.incoming_control.x,
+            edit.incoming_control.y,
+        )
+    if edit.outgoing_control_node is not None and edit.outgoing_control is not None:
+        edit.outgoing_control_node.position = (
+            edit.outgoing_control.x,
+            edit.outgoing_control.y,
+        )
     replacement = [
-        node_class((edit.before.x, edit.before.y), type=line, name=original.name),
+        node_class(
+            (edit.before.x, edit.before.y),
+            type=edit.original_type,
+            smooth=True,
+            name=original.name,
+        ),
         node_class((edit.control_1.x, edit.control_1.y), type=offcurve),
         node_class((edit.control_2.x, edit.control_2.y), type=offcurve),
         node_class((edit.after.x, edit.after.y), type=curve, smooth=True),
     ]
-    edit.path.nodes = nodes[: edit.node_index] + replacement + nodes[edit.node_index + 1 :]
+    edit.path.nodes = nodes[:node_index] + replacement + nodes[node_index + 1 :]
 
 
 def _apply_terminal_edit(
@@ -905,7 +1011,7 @@ def _terminal_edit_report(edit: _TerminalEdit) -> dict[str, Any]:
         "master_id": edit.master_id,
         "master_name": edit.master_name,
         "shaft_width": edit.shaft_width,
-        "radius": edit.shaft_width / 2.0,
+        "radius": edit.trim_distance,
         "trim_distance": edit.trim_distance,
         "added_nodes": 5,
     }
@@ -1041,7 +1147,7 @@ def round_glyphs_font(
             total_glyphs_skipped += 1
             continue
 
-        maximum_terminal_width = float(getattr(font, "upm", 1000) or 1000) * 0.14
+        maximum_terminal_width = float(getattr(font, "upm", 1000) or 1000) * 0.16
         reference_paths = list(reference_layer.paths)
         master_paths = {
             master.id: (
@@ -1137,7 +1243,9 @@ def round_glyphs_font(
         master_depths = {master.id: _path_depths(master_paths[master.id]) for master in masters}
         corner_candidates = _reference_candidates(
             reference_layer,
-            line,
+            line=line,
+            curve=curve,
+            offcurve=offcurve,
             include_inner=inner_radii is not None,
         )
         prepared: list[tuple[_Candidate, list[_MasterEdit]]] = []
@@ -1158,6 +1266,9 @@ def round_glyphs_font(
                     candidate,
                     radius,
                     max_segment_ratio,
+                    line=line,
+                    curve=curve,
+                    offcurve=offcurve,
                 )
                 if reason is not None:
                     break

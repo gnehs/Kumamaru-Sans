@@ -176,6 +176,51 @@ def test_rounds_all_masters_with_identical_new_topology_and_per_master_radii() -
     json.dumps(report, sort_keys=True)
 
 
+def test_rounds_curve_line_and_line_curve_joins_across_all_masters() -> None:
+    font = _font()
+    glyph = font.glyphs["A"]
+    for master, (_master_id, _name, scale) in zip(
+        font.masters,
+        MASTER_DATA,
+        strict=True,
+    ):
+        path = GSPath()
+        path.closed = True
+        path.nodes = [
+            GSNode((0, 0), type=LINE),
+            GSNode((30 * scale, 0), type=OFFCURVE),
+            GSNode((70 * scale, 0), type=OFFCURVE),
+            GSNode((100 * scale, 0), type=CURVE),
+            GSNode((100 * scale, 100 * scale), type=LINE),
+            GSNode((0, 100 * scale), type=LINE),
+        ]
+        glyph.layers[master.id].paths = [path]
+
+    report = round_glyphs_font(
+        font,
+        ["A"],
+        {"Light": 8, "Regular": 12, "Bold": 18},
+        terminal_rounding=False,
+    )
+
+    applied = report["glyphs"][0]["applied"]
+    assert {candidate["node_index"] for candidate in applied} == {0, 3, 4, 5}
+    assert all(candidate["kind"] == "corner" for candidate in applied)
+    node_types = _master_node_types(font)
+    assert len({tuple(types) for types in node_types.values()}) == 1
+    for master in font.masters:
+        nodes = list(glyph.layers[master.id].paths[0].nodes)
+        assert not any(
+            node.type == CURVE
+            and node.position.x
+            == pytest.approx(
+                100 * dict((name, scale) for _master_id, name, scale in MASTER_DATA)[master.name]
+            )
+            and node.position.y == pytest.approx(0)
+            for node in nodes
+        )
+
+
 def test_topology_mismatch_rolls_back_candidate_in_every_master() -> None:
     font = _font(mismatch=True)
     before = _master_node_types(font)
@@ -361,6 +406,46 @@ def test_omitting_inner_radii_preserves_counter_corners() -> None:
     for master in font.masters:
         assert len(glyph.layers[master.id].paths[0].nodes) == 16
         assert len(glyph.layers[master.id].paths[1].nodes) == 4
+
+
+def test_inner_radii_round_structural_concave_corners_with_smaller_radius() -> None:
+    font = _font()
+    glyph = font.glyphs["A"]
+    for master, (_master_id, _name, scale) in zip(
+        font.masters,
+        MASTER_DATA,
+        strict=True,
+    ):
+        glyph.layers[master.id].paths = [
+            _path(
+                [
+                    (0, 0),
+                    (300 * scale, 0),
+                    (300 * scale, 100 * scale),
+                    (100 * scale, 100 * scale),
+                    (100 * scale, 300 * scale),
+                    (0, 300 * scale),
+                ]
+            )
+        ]
+
+    report = round_glyphs_font(
+        font,
+        ["A"],
+        {"*": 20},
+        inner_radii_by_master={"*": 8},
+        terminal_rounding=False,
+    )
+
+    structural_inner = [
+        candidate
+        for candidate in report["glyphs"][0]["applied"]
+        if candidate["corner_type"] == "inner"
+    ]
+    assert len(structural_inner) == 1
+    assert {
+        master["radius"] for candidate in structural_inner for master in candidate["masters"]
+    } == {8.0}
 
 
 def test_all_exporting_glyphs_uses_compact_report_and_excludes_non_exporting() -> None:
@@ -632,10 +717,10 @@ def test_preserves_terminal_caps_embedded_in_other_black_strokes() -> None:
         assert [len(path.nodes) for path in glyph.layers[master.id].paths] == [16, 14, 14]
 
 
-def test_relaxes_perpendicular_gate_only_for_long_parallel_shafts() -> None:
+def test_accepts_visibly_slanted_caps_on_long_parallel_shafts() -> None:
     font = _font()
     glyph = font.glyphs["A"]
-    cap_slant = math.tan(math.radians(18.3)) * 100
+    cap_slant = math.tan(math.radians(24.5)) * 100
     for master, (_master_id, _name, scale) in zip(
         font.masters,
         MASTER_DATA,
@@ -658,6 +743,32 @@ def test_relaxes_perpendicular_gate_only_for_long_parallel_shafts() -> None:
         item for item in report["glyphs"][0]["applied"] if item["kind"] == "terminal"
     ]
     assert len(terminal_reports) == 2
+
+
+def test_rejects_caps_beyond_the_slant_safety_gate() -> None:
+    font = _font()
+    glyph = font.glyphs["A"]
+    cap_slant = math.tan(math.radians(25.5)) * 100
+    for master, (_master_id, _name, scale) in zip(
+        font.masters,
+        MASTER_DATA,
+        strict=True,
+    ):
+        glyph.layers[master.id].paths = [
+            _path(
+                [
+                    (0, 0),
+                    (400 * scale, 0),
+                    ((400 + cap_slant) * scale, 100 * scale),
+                    (0, 100 * scale),
+                ]
+            )
+        ]
+
+    report = round_glyphs_font(font, ["A"], {"*": 12})
+
+    terminals = [item for item in report["glyphs"][0]["applied"] if item["kind"] == "terminal"]
+    assert len(terminals) == 1
 
 
 def test_terminal_rounding_can_be_disabled() -> None:
@@ -694,7 +805,7 @@ def test_rejects_wide_rectangle_as_terminal_candidate() -> None:
 def test_accepts_terminal_width_just_below_safe_maximum_across_masters() -> None:
     font = _font()
     glyph = font.glyphs["A"]
-    widths = {"Light": 126, "Regular": 132, "Bold": 139}
+    widths = {"Light": 146, "Regular": 152, "Bold": 159}
     for master, (_master_id, _name, scale) in zip(
         font.masters,
         MASTER_DATA,
@@ -720,6 +831,101 @@ def test_accepts_terminal_width_just_below_safe_maximum_across_masters() -> None
     assert len(terminal_applied) == 2
 
 
+def test_rounds_compact_stroke_when_sides_are_just_longer_than_its_width() -> None:
+    font = _font()
+    glyph = font.glyphs["A"]
+    for master, (_master_id, _name, scale) in zip(
+        font.masters,
+        MASTER_DATA,
+        strict=True,
+    ):
+        glyph.layers[master.id].paths = [
+            _path(
+                [
+                    (0, 0),
+                    (120 * scale, 0),
+                    (120 * scale, 100 * scale),
+                    (0, 100 * scale),
+                ]
+            )
+        ]
+
+    report = round_glyphs_font(font, ["A"], {"*": 12})
+
+    terminal_applied = [
+        item for item in report["glyphs"][0]["applied"] if item["kind"] == "terminal"
+    ]
+    assert len(terminal_applied) == 2
+    for master in font.masters:
+        nodes = list(glyph.layers[master.id].paths[0].nodes)
+        apexes = [
+            node.position
+            for index, node in enumerate(nodes)
+            if node.type == CURVE
+            and nodes[(index - 1) % len(nodes)].type == OFFCURVE
+            and nodes[(index + 1) % len(nodes)].type == OFFCURVE
+        ]
+        assert len(apexes) == 2
+        assert apexes[0].x != pytest.approx(apexes[1].x)
+
+
+def test_rounds_compact_two_cap_dot_with_cubic_sides_without_overlap() -> None:
+    font = _font()
+    glyph = font.glyphs["A"]
+    for master, (_master_id, _name, scale) in zip(
+        font.masters,
+        MASTER_DATA,
+        strict=True,
+    ):
+        path = GSPath()
+        path.closed = True
+        path.nodes = [
+            GSNode((0, 0), type=LINE),
+            GSNode((25 * scale, 0), type=OFFCURVE),
+            GSNode((55 * scale, 0), type=OFFCURVE),
+            GSNode((80 * scale, 0), type=CURVE),
+            GSNode((80 * scale, 100 * scale), type=LINE),
+            GSNode((55 * scale, 100 * scale), type=OFFCURVE),
+            GSNode((25 * scale, 100 * scale), type=OFFCURVE),
+            GSNode((0, 100 * scale), type=CURVE),
+        ]
+        glyph.layers[master.id].paths = [path]
+
+    report = round_glyphs_font(font, ["A"], {"*": 12})
+
+    terminals = [item for item in report["glyphs"][0]["applied"] if item["kind"] == "terminal"]
+    assert len(terminals) == 2
+    assert all(
+        master["radius"] < master["shaft_width"] / 2
+        for terminal in terminals
+        for master in terminal["masters"]
+    )
+
+
+def test_preserves_too_short_stroke_when_two_round_caps_would_overlap() -> None:
+    font = _font()
+    glyph = font.glyphs["A"]
+    for master, (_master_id, _name, scale) in zip(
+        font.masters,
+        MASTER_DATA,
+        strict=True,
+    ):
+        glyph.layers[master.id].paths = [
+            _path(
+                [
+                    (0, 0),
+                    (100 * scale, 0),
+                    (100 * scale, 100 * scale),
+                    (0, 100 * scale),
+                ]
+            )
+        ]
+
+    report = round_glyphs_font(font, ["A"], {"*": 12})
+
+    assert not any(item["kind"] == "terminal" for item in report["glyphs"][0]["applied"])
+
+
 def test_terminal_candidate_is_skipped_when_one_master_fails_geometry_gate() -> None:
     font = _font()
     glyph = font.glyphs["A"]
@@ -728,7 +934,7 @@ def test_terminal_candidate_is_skipped_when_one_master_fails_geometry_gate() -> 
         MASTER_DATA,
         strict=True,
     ):
-        width = 160 if master.name == "Bold" else 100 * scale
+        width = 161 if master.name == "Bold" else 100 * scale
         glyph.layers[master.id].paths = [
             _path(
                 [

@@ -156,8 +156,8 @@ kumamaru source-round \
 
 多字重流程已接入 GitHub Actions 並作為預覽 Release 的建置來源，但仍有下列限制：
 
-- 處理封閉輪廓上、跨所有 masters 拓撲一致的黑色外角、白色 counter 內角，以及通過幾何安全門檻的平切筆畫端點。
-- 多筆畫交會形成的結構凹角不視為 counter，會保留原形，避免交會處過粗。
+- 處理封閉輪廓上、跨所有 masters 拓撲一致的黑色外角、白色 counter 與結構凹角，以及通過幾何安全門檻的平切筆畫端點。
+- 結構凹角沿用較小的 inner radius，避免交會處與外角使用相同的大半徑。
 - 任一 master 不安全時，該候選會整組跳過，不會只修改部分字重。
 - 含 bracket layer 的所選 glyph 會整字跳過；後續需實作 bracket-aware 映射。
 - 尚未移植靜態 TTF pipeline 的 spur override；圓頭 terminal 目前只涵蓋可由單一直線 cap 與兩側 shaft 安全辨識的輪廓。
