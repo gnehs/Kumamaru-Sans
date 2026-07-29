@@ -12,7 +12,7 @@ OFL_URL = "https://openfontlicense.org"
 DEFAULT_MODIFICATION_NOTICE = (
     "Modified by the Kumamaru Sans project; this modified font is not endorsed by IBM."
 )
-MANAGED_NAME_IDS = frozenset({0, 1, 2, 3, 4, 5, 6, 13, 14, 16, 17})
+MANAGED_NAME_IDS = frozenset({0, 1, 2, 3, 4, 5, 6, 13, 14, 16, 17, 19})
 WINDOWS_ENGLISH = (3, 1, 0x0409)
 WINDOWS_ZH_TW = (3, 1, 0x0404)
 UNICODE_RECORD = (0, 4, 0)
@@ -38,6 +38,7 @@ def _config_values(config: object) -> dict[str, Any]:
             "modification_notice",
             "license_description",
             "license_url",
+            "sample_text",
         )
         values = {name: getattr(config, name) for name in names if hasattr(config, name)}
     nested = values.get("font")
@@ -146,6 +147,7 @@ def apply_metadata(font: TTFont, config: object) -> dict[str, Any]:
     copyright_notice = " ".join(part for part in (*attribution_parts, modification_notice) if part)
     license_description = str(values.get("license_description", OFL_DESCRIPTION)).strip()
     license_url = str(values.get("license_url", OFL_URL)).strip()
+    sample_text = str(values.get("sample_text", "")).strip()
     if not copyright_notice or not license_description or not license_url:
         raise MetadataError("copyright, modification, and license metadata may not be empty")
 
@@ -165,6 +167,8 @@ def apply_metadata(font: TTFont, config: object) -> dict[str, Any]:
     _set_records(font, 14, license_url)
     _set_records(font, 16, family, family_zh)
     _set_records(font, 17, style)
+    if sample_text:
+        _set_records(font, 19, sample_text, sample_text)
 
     font["OS/2"].achVendID = vendor_id
     font["OS/2"].fsType = 0

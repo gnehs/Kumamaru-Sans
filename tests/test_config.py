@@ -11,6 +11,7 @@ def test_default_config_loads() -> None:
     config = load_config(ROOT / "config/regular.toml")
     assert config.font.family_name == "Kumamaru Sans"
     assert config.font.vendor_id == "KUMA"
+    assert config.font.sample_text.startswith("姐妹們誰懂啊")
     assert config.spur_detection.report_only is True
 
 

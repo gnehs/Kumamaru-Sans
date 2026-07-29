@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont, newTable
 from fontTools.ttLib.tables._f_v_a_r import Axis, NamedInstance
 
+from kumamaru.config import FontConfig
 from kumamaru.source_metadata import localize_compiled_font
 
 
@@ -72,3 +74,33 @@ def test_localize_compiled_variable_axis_and_instance(tmp_path: Path) -> None:
     names = font["name"]
     assert names.getName(256, 3, 1, 0x0404).toUnicode() == "字重"
     assert names.getName(2, 3, 1, 0x0404).toUnicode() == "標準體"
+    stat = font["STAT"].table
+    assert stat.AxisValueCount == 1
+    axis_value = stat.AxisValueArray.AxisValue[0]
+    assert axis_value.Value == 400
+    assert axis_value.Flags == 0x2
+
+
+def test_apply_project_metadata_to_compiled_source_font(tmp_path: Path) -> None:
+    path = tmp_path / "KumamaruSans-Regular.ttf"
+    _font(path)
+    config = FontConfig(
+        family_name="Kumamaru Sans",
+        family_name_zh_hant="熊丸體",
+        style_name="Regular",
+        version="0.1.0",
+        vendor_id="KUMA",
+        copyright_notice="Copyright Example.",
+        sample_text="姐妹們誰懂啊！！",
+    )
+
+    localize_compiled_font(path, font_config=config)
+
+    font = TTFont(path)
+    names = font["name"]
+    assert names.getName(16, 3, 1, 0x0409).toUnicode() == "Kumamaru Sans"
+    assert names.getName(17, 3, 1, 0x0409).toUnicode() == "Regular"
+    assert names.getName(5, 3, 1, 0x0409).toUnicode() == "Version 0.1.0"
+    assert names.getName(19, 3, 1, 0x0804).toUnicode() == "姐妹們誰懂啊！！"
+    assert font["OS/2"].achVendID == "KUMA"
+    assert font["head"].fontRevision == pytest.approx(0.1, abs=1e-4)

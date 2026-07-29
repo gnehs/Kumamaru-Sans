@@ -27,6 +27,7 @@ class FontConfig:
         "This Font Software is licensed under the SIL Open Font License, Version 1.1."
     )
     license_url: str = "https://openfontlicense.org"
+    sample_text: str = ""
 
 
 @dataclass(frozen=True)

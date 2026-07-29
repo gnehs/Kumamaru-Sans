@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from fontTools.otlLib.builder import buildStatTable  # type: ignore[import-untyped]
 from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
 
+from kumamaru.config import FontConfig, load_config
+from kumamaru.metadata import apply_metadata
 from kumamaru.source_normalize import (
     KUMAMARU_LOCALIZED_FAMILY_NAMES,
     KUMAMARU_LOCALIZED_STYLE_NAMES,
@@ -27,8 +31,12 @@ class SourceMetadataError(ValueError):
     """Raised when a compiled font cannot be localized safely."""
 
 
-def localize_compiled_font(path: Path) -> dict[str, Any]:
-    """Add Traditional and Simplified Chinese name records in place."""
+def localize_compiled_font(
+    path: Path,
+    *,
+    font_config: FontConfig | None = None,
+) -> dict[str, Any]:
+    """Apply release metadata and localized names to a compiled source font."""
 
     font = TTFont(path)
     name_table = font["name"]
@@ -44,6 +52,11 @@ def localize_compiled_font(path: Path) -> dict[str, Any]:
     if english_style not in KUMAMARU_LOCALIZED_STYLE_NAMES:
         raise SourceMetadataError(f"{path} has unexpected style name {english_style!r}")
 
+    metadata: dict[str, Any] | None = None
+    if font_config is not None:
+        metadata = apply_metadata(font, replace(font_config, style_name=english_style))
+        name_table = font["name"]
+
     written: list[dict[str, Any]] = []
     for language, platform in WINDOWS_LANGUAGES.items():
         family = KUMAMARU_LOCALIZED_FAMILY_NAMES[language]
@@ -58,6 +71,8 @@ def localize_compiled_font(path: Path) -> dict[str, Any]:
             16: family,
             17: style,
         }
+        if font_config is not None and font_config.sample_text:
+            values[19] = font_config.sample_text
         for name_id, value in values.items():
             name_table.setName(value, name_id, *platform)
             written.append({"language": language, "name_id": name_id, "value": value})
@@ -92,8 +107,46 @@ def localize_compiled_font(path: Path) -> dict[str, Any]:
                     }
                 )
 
+    if "fvar" in font:
+        _rebuild_variable_stat(font)
+
     font.save(path)
-    return {"path": str(path), "records_written": written}
+    return {
+        "path": str(path),
+        "metadata": metadata,
+        "records_written": written,
+    }
+
+
+def _rebuild_variable_stat(font: TTFont) -> None:
+    fvar = font["fvar"]
+    if len(fvar.axes) != 1 or fvar.axes[0].axisTag != "wght":
+        raise SourceMetadataError("variable font must contain exactly one wght axis")
+
+    values: list[dict[str, Any]] = []
+    for instance in fvar.instances:
+        value = float(instance.coordinates["wght"])
+        entry: dict[str, Any] = {
+            "value": value,
+            "name": instance.subfamilyNameID,
+        }
+        if value == fvar.axes[0].defaultValue:
+            entry["flags"] = 0x2
+            if any(other.coordinates["wght"] == 700 for other in fvar.instances):
+                entry["linkedValue"] = 700
+        values.append(entry)
+
+    buildStatTable(
+        font,
+        [
+            {
+                "tag": "wght",
+                "name": fvar.axes[0].axisNameID,
+                "ordering": 0,
+                "values": values,
+            }
+        ],
+    )
 
 
 def _english_name(font: TTFont, name_id: int) -> str | None:
@@ -103,12 +156,18 @@ def _english_name(font: TTFont, name_id: int) -> str | None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="project TOML whose font metadata is applied before localization",
+    )
     parser.add_argument("paths", nargs="+", type=Path)
     return parser
 
 
 def main() -> int:
     args = _parser().parse_args()
+    font_config = load_config(args.config).font if args.config is not None else None
     files: list[Path] = []
     for path in args.paths:
         if path.is_dir():
@@ -118,7 +177,7 @@ def main() -> int:
     if not files:
         raise SourceMetadataError("no TTF files found")
     for path in files:
-        localize_compiled_font(path)
+        localize_compiled_font(path, font_config=font_config)
         print(f"localized: {path}")
     return 0
 

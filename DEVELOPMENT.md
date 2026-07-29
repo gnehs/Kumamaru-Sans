@@ -10,13 +10,16 @@
 1. 開啟 [Actions → Build font and release](https://github.com/gnehs/Kumamaru-Sans/actions/workflows/build-release.yml)
 2. 點選最新一次 **成功（綠色 ✓）** 的 run（確認對應 commit）
 3. 頁面底部 **Artifacts** 下載 `kumamaru-sans-build`（通常保留約 30 天）
-4. 解壓後取得 `KumamaruSans-Regular.ttf` 等產物
+4. 解壓後可取得 8 個靜態 TTF、`KumamaruSans[wght].ttf`、完整 zip 與 `SHA256SUMS`
 
 注意：
 
 - 下載 artifact 需要登入 GitHub，且你必須能存取此 repository
 - Artifact 是自動化產物，**尚未等同人工校對完成的正式版**
-- 推送版本 tag（例如 `0.2.3`）且 build 通過時，另於 [Releases](https://github.com/gnehs/Kumamaru-Sans/releases) 提供 TTF／zip／`SHA256SUMS`
+- 推送版本 tag（例如 `0.2.3`）且 build 通過時，另於 [Releases](https://github.com/gnehs/Kumamaru-Sans/releases) 提供 9 個單獨 TTF、完整 zip 與 `SHA256SUMS`
+
+完整 zip 將字型分成 `Static/` 與 `Variable/`。兩者是同一個熊丸體 family 的不同發行格式；
+請擇一安裝，不要同時安裝，以免靜態 Regular 與 Variable Font 的預設 Regular 發生重複。
 
 ## 授權與名稱
 
@@ -75,18 +78,21 @@ kumamaru validate --before vendor/IBMPlexSansTC-Regular.ttf \
   --output build/validation.json
 ```
 
-常用 Make 目標：`make lint`、`make test`、`make smoke`、`make full`、`make validate`、`make validate-full`、`make fontbakery`、`make proof`。
+常用 Make 目標：`make lint`、`make test`、`make smoke`、`make full`、`make validate`、
+`make validate-full`、`make fontbakery`、`make proof`、`make source-inspect`、
+`make source-round`、`make source-build-instances`、`make source-build-variable`、
+`make source-fontbakery`。
 
 - `smoke`：只處理測試字集
 - `full`：處理 best cmap 中每個不重複的 encoded glyph（可安裝預覽應以此為準）
 
 缺少上游字型時，相依的 smoke／integration 應跳過，不應下載替代字型。
 
-### 多字重 Glyphs source prototype
+### 多字重 Glyphs source 建置
 
 IBM 在
 [`@ibm/plex-sans-tc@1.1.1` release](https://github.com/IBM/plex/releases/tag/%40ibm/plex-sans-tc%401.1.1)
-另附可編輯的 `sources.zip`。這條研究流程以其中的三個 master
+另附可編輯的 `sources.zip`。正式預覽 build 以其中的三個 master
 （Thin／Regular／Bold）同步修改輪廓，避免把各字重獨立圓角後破壞插值相容性。
 
 先安裝 source 額外依賴：
@@ -121,6 +127,13 @@ make source-build-instances PYTHON=.venv/bin/python
 
 # 從同一組 masters 編出連續的 wght 100–700 Variable Font
 make source-build-variable PYTHON=.venv/bin/python
+
+# 驗證完整產物集合、metadata、fvar／STAT 與 release-critical FontBakery checks
+python -m kumamaru.source_validation \
+  build/source/instance-ttf \
+  'build/source/variable-ttf/KumamaruSans[wght].ttf' \
+  --config config/regular.toml
+make source-fontbakery PYTHON=.venv/bin/python
 ```
 
 Variable Font 會輸出到
@@ -141,14 +154,15 @@ kumamaru source-round \
   --report build/source/rounding-report.json
 ```
 
-此功能目前是研究 prototype：
+多字重流程已接入 GitHub Actions 並作為預覽 Release 的建置來源，但仍有下列限制：
 
 - 處理封閉輪廓上、跨所有 masters 拓撲一致的黑色外角、白色 counter 內角，以及通過幾何安全門檻的平切筆畫端點。
 - 多筆畫交會形成的結構凹角不視為 counter，會保留原形，避免交會處過粗。
 - 任一 master 不安全時，該候選會整組跳過，不會只修改部分字重。
 - 含 bracket layer 的所選 glyph 會整字跳過；後續需實作 bracket-aware 映射。
-- 尚未移植 spur override 與完整 metadata；圓頭 terminal 目前只涵蓋可由單一直線 cap 與兩側 shaft 安全辨識的輪廓。
-- `fontmake` 重編譯的 OpenType tables 不保證與 IBM 發行 TTF 等價，產物不可直接發布。
+- 尚未移植靜態 TTF pipeline 的 spur override；圓頭 terminal 目前只涵蓋可由單一直線 cap 與兩側 shaft 安全辨識的輪廓。
+- `fontmake` 會由 Glyphs source 重新編譯 OpenType tables，因此不追求與 IBM 發行 TTF 二進位等價；
+  每次自動 build 仍須通過專案 metadata、字集、`fvar`／`STAT` 與 FontBakery gates。
 
 ### 去腳與鉤的原則
 
@@ -169,4 +183,7 @@ git push origin 0.2.3
 
 ## 產物
 
-可再生輸出位於 `build/`（inspection、analysis、build、validation JSON 與 HTML/SVG proof）。發行時請連同 OFL 與上游 attribution 一併提供。原始 IBM TTF 與含 `before.ttf` 的 proof 不會上傳至 Actions artifact／Release。
+可再生輸出位於 `build/`。靜態 TTF 位於 `build/source/instance-ttf/`，Variable Font 位於
+`build/source/variable-ttf/`，來源清單、圓角報告與 FontBakery 報告位於 `build/source/`。
+發行 zip 會包含 `Static/`、`Variable/`、`Reports/`、OFL、上游 attribution 與 checksums；
+原始 IBM source、衍生 `.glyphs` 與含 `before.ttf` 的 proof 不會上傳至 Actions artifact／Release。

@@ -10,8 +10,9 @@ SOURCE_REPORT ?= $(BUILD)/source/rounding-report.json
 SMOKE_DERIVED_SOURCE ?= $(BUILD)/source/Kumamaru Sans Smoke.glyphs
 SMOKE_SOURCE_REPORT ?= $(BUILD)/source/smoke-rounding-report.json
 VARIABLE_FONT ?= $(BUILD)/source/variable-ttf/KumamaruSans[wght].ttf
+SOURCE_FONTBAKERY_REPORT ?= $(BUILD)/source/fontbakery.json
 
-.PHONY: lint test smoke full validate validate-full fontbakery proof source-inspect source-round source-round-smoke source-build-masters source-build-instances source-build-variable
+.PHONY: lint test smoke full validate validate-full fontbakery proof source-inspect source-round source-round-smoke source-build-masters source-build-instances source-build-variable source-fontbakery
 
 lint:
 	$(PYTHON) -m ruff format --check src tests
@@ -100,7 +101,7 @@ source-build-masters:
 	else \
 		mkdir -p "$(BUILD)/source/master-ttf"; \
 		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf --output-dir "$(BUILD)/source/master-ttf" --no-production-names --verbose ERROR; \
-		$(PYTHON) -m kumamaru.source_metadata "$(BUILD)/source/master-ttf"; \
+		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(BUILD)/source/master-ttf"; \
 	fi
 
 source-build-instances:
@@ -109,7 +110,7 @@ source-build-instances:
 	else \
 		mkdir -p "$(BUILD)/source/instance-ttf"; \
 		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i --output-dir "$(BUILD)/source/instance-ttf" --no-production-names --verbose ERROR; \
-		$(PYTHON) -m kumamaru.source_metadata "$(BUILD)/source/instance-ttf"; \
+		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(BUILD)/source/instance-ttf"; \
 	fi
 
 source-build-variable:
@@ -118,5 +119,21 @@ source-build-variable:
 	else \
 		mkdir -p "$(dir $(VARIABLE_FONT))"; \
 		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o variable --output-path "$(VARIABLE_FONT)" --no-production-names --filter='...' --filter='kumamaru.filters.variable_compatibility::VariableCompatibilityFilter' --verbose ERROR; \
-		$(PYTHON) -m kumamaru.source_metadata "$(VARIABLE_FONT)"; \
+		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(VARIABLE_FONT)"; \
 	fi
+
+source-fontbakery:
+	@mkdir -p "$(dir $(SOURCE_FONTBAKERY_REPORT))"
+	$(PYTHON) -m fontbakery check-universal \
+		--skip-network --no-progress --error-code-on FAIL \
+		--json "$(SOURCE_FONTBAKERY_REPORT)" \
+		-c opentype/family/consistent_family_name \
+		-c opentype/fvar/axis_ranges_correct \
+		-c opentype/fvar/regular_coords_correct \
+		-c opentype/varfont/STAT_axis_record_for_each_axis \
+		-c opentype/weight_class_fvar \
+		-c fvar_name_entries \
+		-c inconsistencies_between_fvar_STAT \
+		-c STAT_strings \
+		-c typographic_family_name \
+		"$(BUILD)"/source/instance-ttf/*.ttf "$(VARIABLE_FONT)"

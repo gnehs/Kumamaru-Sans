@@ -10,6 +10,7 @@ copyright_notice = "Copyright 2018 IBM Corp. All rights reserved."
 modification_notice = "Modified by the Kumamaru Sans project; not endorsed by IBM."
 license_description = "This Font Software is licensed under the SIL Open Font License, Version 1.1."
 license_url = "https://openfontlicense.org"
+sample_text = "姐妹們誰懂啊！！本熊本來只想蓋被被曬太陽順便釣個小魚魚療癒一下，結果哇賽直接釣到會噴蜂蜜的閃亮魚王！！"
 
 [rounding]
 enabled = true

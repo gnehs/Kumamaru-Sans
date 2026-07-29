@@ -26,6 +26,7 @@ def test_apply_metadata_renames_and_localizes_without_losing_attribution(
                 "modification_notice": "Modified test font; not endorsed by IBM.",
                 "license_description": "SIL Open Font License, Version 1.1.",
                 "license_url": "https://openfontlicense.org",
+                "sample_text": "姐妹們誰懂啊！！",
             },
         )
         font.save(output)
@@ -41,6 +42,7 @@ def test_apply_metadata_renames_and_localizes_without_losing_attribution(
         assert name.getName(1, 1, 0, 0) is None
         assert name.getName(1, 1, 2, 19) is None
         assert name.getName(6, 3, 1, 0x0409).toUnicode() == "KumamaruSans-Regular"
+        assert name.getName(19, 3, 1, 0x0404).toUnicode() == "姐妹們誰懂啊！！"
         assert "Copyright Example Upstream." in name.getName(0, 3, 1, 0x0409).toUnicode()
         assert rebuilt["OS/2"].achVendID == "KUMA"
         assert rebuilt["OS/2"].fsType == 0
