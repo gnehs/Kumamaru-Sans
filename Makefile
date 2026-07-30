@@ -99,8 +99,8 @@ source-build-masters:
 	@if [ ! -f "$(DERIVED_SOURCE)" ]; then \
 		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
 	else \
-		mkdir -p "$(BUILD)/source/master-ttf"; \
-		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf --output-dir "$(BUILD)/source/master-ttf" --no-production-names --verbose ERROR; \
+		mkdir -p "$(BUILD)/source/master-ttf" && \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf --output-dir "$(BUILD)/source/master-ttf" --master-dir "$(BUILD)/source/master-build-ufo" --designspace-path "$(BUILD)/source/masters.designspace" --no-production-names --verbose ERROR && \
 		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(BUILD)/source/master-ttf"; \
 	fi
 
@@ -108,8 +108,8 @@ source-build-instances:
 	@if [ ! -f "$(DERIVED_SOURCE)" ]; then \
 		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
 	else \
-		mkdir -p "$(BUILD)/source/instance-ttf"; \
-		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i --output-dir "$(BUILD)/source/instance-ttf" --no-production-names --verbose ERROR; \
+		mkdir -p "$(BUILD)/source/instance-ttf" && \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i --output-dir "$(BUILD)/source/instance-ttf" --master-dir "$(BUILD)/source/instance-build-ufo" --designspace-path "$(BUILD)/source/instances.designspace" --no-production-names --verbose ERROR && \
 		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(BUILD)/source/instance-ttf"; \
 	fi
 
@@ -117,8 +117,8 @@ source-build-variable:
 	@if [ ! -f "$(DERIVED_SOURCE)" ]; then \
 		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
 	else \
-		mkdir -p "$(dir $(VARIABLE_FONT))"; \
-		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o variable --output-path "$(VARIABLE_FONT)" --no-production-names --filter='...' --filter='kumamaru.filters.variable_compatibility::VariableCompatibilityFilter' --verbose ERROR; \
+		mkdir -p "$(dir $(VARIABLE_FONT))" && \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o variable --output-path "$(VARIABLE_FONT)" --master-dir "$(BUILD)/source/variable-build-ufo" --designspace-path "$(BUILD)/source/variable.designspace" --no-production-names --filter='...' --filter='kumamaru.filters.variable_compatibility::VariableCompatibilityFilter' --verbose ERROR && \
 		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(VARIABLE_FONT)"; \
 	fi
 
