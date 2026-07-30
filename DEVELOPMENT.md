@@ -54,32 +54,36 @@ vendor/IBMPlexSansTC-Regular.ttf
 
 ```bash
 # 檢查輸入
-kumamaru inspect --input vendor/IBMPlexSansTC-Regular.ttf --output build/inspection.json
+kumamaru inspect --input vendor/IBMPlexSansTC-Regular.ttf \
+  --output build/smoke/inspection.json
 
 # 分析（不修改字型）
 kumamaru analyze --input vendor/IBMPlexSansTC-Regular.ttf \
   --glyphs config/glyphsets/smoke.txt --config config/regular.toml \
-  --output build/analysis.json
+  --output build/smoke/analysis.json
 
-# 建置與 proof
+# 建置局部 smoke 測試字型與 proof
 kumamaru build --input vendor/IBMPlexSansTC-Regular.ttf \
-  --output build/KumamaruSans-Regular.ttf --glyphs config/glyphsets/smoke.txt \
+  --output build/smoke/KumamaruSans-Regular.ttf --glyphs config/glyphsets/smoke.txt \
   --config config/regular.toml --overrides config/overrides.yaml \
-  --report build/build-report.json
+  --report build/smoke/build-report.json
 
 kumamaru proof --before vendor/IBMPlexSansTC-Regular.ttf \
-  --after build/KumamaruSans-Regular.ttf --glyphs config/glyphsets/smoke.txt \
-  --analysis build/analysis.json --build-report build/build-report.json \
-  --output build/proof
+  --after build/smoke/KumamaruSans-Regular.ttf --glyphs config/glyphsets/smoke.txt \
+  --analysis build/smoke/analysis.json --build-report build/smoke/build-report.json \
+  --output build/smoke/proof
 
-# 以 FreeType native hinting mode 建立目前 unhinted 產物的像素基準
+# 完整可安裝預覽需處理所有 encoded glyph
+make full
+
+# 以 FreeType native hinting mode 建立完整 unhinted 產物的像素基準
 kumamaru raster-proof --font build/KumamaruSans-Regular.ttf \
   --output build/raster-proof-unhinted
 
-# 驗證
+# 驗證 smoke 測試字型
 kumamaru validate --before vendor/IBMPlexSansTC-Regular.ttf \
-  --after build/KumamaruSans-Regular.ttf --glyphs config/glyphsets/smoke.txt \
-  --output build/validation.json
+  --after build/smoke/KumamaruSans-Regular.ttf --glyphs config/glyphsets/smoke.txt \
+  --output build/smoke/validation.json
 ```
 
 常用 Make 目標：`make lint`、`make test`、`make smoke`、`make full`、`make validate`、
@@ -87,7 +91,7 @@ kumamaru validate --before vendor/IBMPlexSansTC-Regular.ttf \
 `make source-round`、`make source-build-instances`、`make source-build-variable`、
 `make source-fontbakery`。
 
-- `smoke`：只處理測試字集
+- `smoke`：只處理測試字集，所有產物隔離於 `build/smoke/`，不可作為可安裝預覽
 - `full`：處理 best cmap 中每個不重複的 encoded glyph（可安裝預覽應以此為準）
 
 缺少上游字型時，相依的 smoke／integration 應跳過，不應下載替代字型。
@@ -97,8 +101,9 @@ kumamaru validate --before vendor/IBMPlexSansTC-Regular.ttf \
 向量 proof 用於檢查輪廓與 point index；它不會執行 TrueType instructions。Hinting 研究另用
 HarfBuzz 的 `hb-view` 透過 FreeType 產生 PNG，並明確設定 `FT_LOAD_DEFAULT`，避免
 `hb-view` 的 `FT_LOAD_NO_HINTING` 預設值讓 proof 意外停用 native hinting。這個模式會
-執行輸入字型實際包含的 instructions；目前 `make raster-proof` 的預設輸入刻意是 unhinted
-build，產物位於 `build/raster-proof-unhinted/`，作為日後 hinted pilot 的 A/B 基準。
+執行輸入字型實際包含的 instructions；`make raster-proof` 的預設輸入刻意是
+`make full` 產生的完整 unhinted build，不接受 `build/smoke/` 的局部測試字型。輸出位於
+`build/raster-proof-unhinted/`，作為日後 hinted pilot 的 A/B 基準。
 
 請先安裝含 FreeType 支援的 `hb-view`，並確認它可執行：
 

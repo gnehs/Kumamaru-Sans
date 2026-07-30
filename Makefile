@@ -4,6 +4,9 @@ BUILD ?= build
 GLYPHS ?= config/glyphsets/smoke.txt
 CONFIG ?= config/regular.toml
 OVERRIDES ?= config/overrides.yaml
+SMOKE_BUILD ?= $(BUILD)/smoke
+SMOKE_FONT ?= $(SMOKE_BUILD)/KumamaruSans-Regular.ttf
+FULL_FONT ?= $(BUILD)/KumamaruSans-Regular.ttf
 SOURCE ?= vendor/ibm-plex-sans-tc/sources/masters/IBM Plex Sans TC.glyphs
 DERIVED_SOURCE ?= $(BUILD)/source/Kumamaru Sans.glyphs
 SOURCE_REPORT ?= $(BUILD)/source/rounding-report.json
@@ -11,7 +14,7 @@ SMOKE_DERIVED_SOURCE ?= $(BUILD)/source/Kumamaru Sans Smoke.glyphs
 SMOKE_SOURCE_REPORT ?= $(BUILD)/source/smoke-rounding-report.json
 VARIABLE_FONT ?= $(BUILD)/source/variable-ttf/KumamaruSans[wght].ttf
 SOURCE_FONTBAKERY_REPORT ?= $(BUILD)/source/fontbakery.json
-RASTER_FONT ?= $(BUILD)/KumamaruSans-Regular.ttf
+RASTER_FONT ?= $(FULL_FONT)
 RASTER_PROOF ?= $(BUILD)/raster-proof-unhinted
 INSTANCE ?=
 
@@ -29,10 +32,10 @@ smoke:
 	@if [ ! -f "$(FONT)" ]; then \
 		echo "skip: missing official upstream font: $(FONT)"; \
 	else \
-		mkdir -p "$(BUILD)"; \
-		$(PYTHON) -m kumamaru.cli inspect --input "$(FONT)" --output "$(BUILD)/inspection.json"; \
-		$(PYTHON) -m kumamaru.cli analyze --input "$(FONT)" --glyphs "$(GLYPHS)" --config "$(CONFIG)" --output "$(BUILD)/analysis.json"; \
-		$(PYTHON) -m kumamaru.cli build --input "$(FONT)" --output "$(BUILD)/KumamaruSans-Regular.ttf" --glyphs "$(GLYPHS)" --config "$(CONFIG)" --overrides "$(OVERRIDES)" --report "$(BUILD)/build-report.json"; \
+		mkdir -p "$(SMOKE_BUILD)"; \
+		$(PYTHON) -m kumamaru.cli inspect --input "$(FONT)" --output "$(SMOKE_BUILD)/inspection.json"; \
+		$(PYTHON) -m kumamaru.cli analyze --input "$(FONT)" --glyphs "$(GLYPHS)" --config "$(CONFIG)" --output "$(SMOKE_BUILD)/analysis.json"; \
+		$(PYTHON) -m kumamaru.cli build --input "$(FONT)" --output "$(SMOKE_FONT)" --glyphs "$(GLYPHS)" --config "$(CONFIG)" --overrides "$(OVERRIDES)" --report "$(SMOKE_BUILD)/build-report.json"; \
 	fi
 
 full:
@@ -42,14 +45,14 @@ full:
 		mkdir -p "$(BUILD)"; \
 		$(PYTHON) -m kumamaru.cli inspect --input "$(FONT)" --output "$(BUILD)/inspection.json"; \
 		$(PYTHON) -m kumamaru.cli analyze --input "$(FONT)" --glyphs "$(GLYPHS)" --config "$(CONFIG)" --output "$(BUILD)/analysis.json"; \
-		$(PYTHON) -m kumamaru.cli build --input "$(FONT)" --output "$(BUILD)/KumamaruSans-Regular.ttf" --all-encoded-glyphs --config "$(CONFIG)" --overrides "$(OVERRIDES)" --report "$(BUILD)/build-report.json"; \
+		$(PYTHON) -m kumamaru.cli build --input "$(FONT)" --output "$(FULL_FONT)" --all-encoded-glyphs --config "$(CONFIG)" --overrides "$(OVERRIDES)" --report "$(BUILD)/build-report.json"; \
 	fi
 
 proof:
 	@if [ ! -f "$(FONT)" ]; then \
 		echo "skip: missing official upstream font: $(FONT)"; \
 	else \
-		$(PYTHON) -m kumamaru.cli proof --before "$(FONT)" --after "$(BUILD)/KumamaruSans-Regular.ttf" --glyphs "$(GLYPHS)" --analysis "$(BUILD)/analysis.json" --build-report "$(BUILD)/build-report.json" --output "$(BUILD)/proof"; \
+		$(PYTHON) -m kumamaru.cli proof --before "$(FONT)" --after "$(SMOKE_FONT)" --glyphs "$(GLYPHS)" --analysis "$(SMOKE_BUILD)/analysis.json" --build-report "$(SMOKE_BUILD)/build-report.json" --output "$(SMOKE_BUILD)/proof"; \
 	fi
 
 raster-proof:
@@ -64,22 +67,22 @@ validate:
 	@if [ ! -f "$(FONT)" ]; then \
 		echo "skip: missing official upstream font: $(FONT)"; \
 	else \
-		$(PYTHON) -m kumamaru.cli validate --before "$(FONT)" --after "$(BUILD)/KumamaruSans-Regular.ttf" --glyphs "$(GLYPHS)" --output "$(BUILD)/validation.json"; \
+		$(PYTHON) -m kumamaru.cli validate --before "$(FONT)" --after "$(SMOKE_FONT)" --glyphs "$(GLYPHS)" --output "$(SMOKE_BUILD)/validation.json"; \
 	fi
 
 validate-full:
 	@if [ ! -f "$(FONT)" ]; then \
 		echo "skip: missing official upstream font: $(FONT)"; \
 	else \
-		$(PYTHON) -m kumamaru.cli validate --before "$(FONT)" --after "$(BUILD)/KumamaruSans-Regular.ttf" --all-encoded-glyphs --output "$(BUILD)/validation.json"; \
+		$(PYTHON) -m kumamaru.cli validate --before "$(FONT)" --after "$(FULL_FONT)" --all-encoded-glyphs --output "$(BUILD)/validation.json"; \
 	fi
 
 fontbakery:
-	@if [ ! -f "$(BUILD)/KumamaruSans-Regular.ttf" ]; then \
-		echo "skip: missing built font: $(BUILD)/KumamaruSans-Regular.ttf"; \
+	@if [ ! -f "$(FULL_FONT)" ]; then \
+		echo "skip: missing full built font: $(FULL_FONT)"; \
 	else \
 		mkdir -p "$(BUILD)"; \
-		$(PYTHON) -m fontbakery check-universal --no-progress --json "$(BUILD)/fontbakery.json" "$(BUILD)/KumamaruSans-Regular.ttf"; \
+		$(PYTHON) -m fontbakery check-universal --no-progress --json "$(BUILD)/fontbakery.json" "$(FULL_FONT)"; \
 	fi
 
 source-inspect:
