@@ -8,6 +8,7 @@ from pathlib import Path
 from fontTools.ttLib import TTFont  # type: ignore[import-untyped]
 
 from kumamaru.config import load_config
+from kumamaru.font_io import HINTING_TABLES
 
 EXPECTED_WEIGHTS = {
     "Thin": 100,
@@ -29,6 +30,9 @@ REQUIRED_TABLES = {
     "loca",
     "maxp",
     "name",
+}
+RELEASE_HINTING_TABLES = HINTING_TABLES | {
+    "cvar",
 }
 
 
@@ -62,6 +66,7 @@ def validate_source_build(
     for path, (style, weight) in expected_paths.items():
         with TTFont(path, lazy=False) as font:
             _require_tables(font, path, REQUIRED_TABLES)
+            _validate_unhinted(font, path)
             if "fvar" in font or "gvar" in font:
                 raise SourceValidationError(f"{path} must be a static TrueType font")
             if font["OS/2"].usWeightClass != weight:
@@ -84,6 +89,7 @@ def validate_source_build(
 
     with TTFont(variable_path, lazy=False) as font:
         _require_tables(font, variable_path, REQUIRED_TABLES | {"STAT", "fvar", "gvar"})
+        _validate_unhinted(font, variable_path)
         _validate_names(
             font,
             variable_path,
@@ -111,6 +117,39 @@ def _require_tables(font: TTFont, path: Path, required: set[str]) -> None:
     missing = sorted(required - set(font.keys()))
     if missing:
         raise SourceValidationError(f"{path} is missing required tables: {missing}")
+
+
+def _validate_unhinted(font: TTFont, path: Path) -> None:
+    """Reject global or per-glyph TrueType hinting in a release artifact."""
+
+    table_tags = set(font.keys())
+    global_tables = sorted(
+        table_tags & RELEASE_HINTING_TABLES
+        | {table_tag for table_tag in table_tags if table_tag.startswith("TSI")}
+    )
+    instructed_glyphs = [
+        glyph_name
+        for glyph_name in font.getGlyphOrder()
+        if (
+            (program := getattr(font["glyf"][glyph_name], "program", None)) is not None
+            and program.getBytecode()
+        )
+    ]
+    if not global_tables and not instructed_glyphs:
+        return
+
+    details: list[str] = []
+    if global_tables:
+        details.append(f"hinting global tables present: {global_tables}")
+    if instructed_glyphs:
+        preview = instructed_glyphs[:20]
+        suffix = (
+            ""
+            if len(instructed_glyphs) <= len(preview)
+            else f" (+{len(instructed_glyphs) - len(preview)} more)"
+        )
+        details.append(f"glyph instructions present: {preview}{suffix}")
+    raise SourceValidationError(f"{path} must be unhinted; {'; '.join(details)}")
 
 
 def _english_name(font: TTFont, name_id: int) -> str | None:

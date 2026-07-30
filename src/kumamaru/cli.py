@@ -18,6 +18,11 @@ from kumamaru.pipeline import (
     validate_fonts,
     write_report,
 )
+from kumamaru.raster_proof import (
+    DEFAULT_PPEMS,
+    RasterProofError,
+    render_raster_proof,
+)
 from kumamaru.source_manifest import (
     SourceManifestError,
     inspect_glyphs_source,
@@ -32,6 +37,11 @@ from kumamaru.source_rounding import (
 
 class ValidationFailed(RuntimeError):
     """Raised after writing a validation report that contains failing checks."""
+
+
+DEFAULT_RASTER_PROOF_TEXT = (
+    "一十口日田中永水心小國圓體鬱龜熊丸　熊丸體的圓角與收筆測試。ABC HOn o 0123456789 @%！？，。"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,6 +96,34 @@ def build_parser() -> argparse.ArgumentParser:
     proof_command.add_argument("--build-report", type=Path, help="build report JSON path")
     proof_command.add_argument("--output", required=True, type=Path, help="proof directory")
     proof_command.set_defaults(handler=_handle_proof)
+
+    raster_proof_command = subcommands.add_parser(
+        "raster-proof",
+        help="render a FreeType low-PPEM PNG proof with hb-view",
+    )
+    raster_proof_command.add_argument("--font", required=True, type=Path, help="input .ttf file")
+    raster_proof_command.add_argument("--output", required=True, type=Path, help="proof directory")
+    raster_text = raster_proof_command.add_mutually_exclusive_group()
+    raster_text.add_argument("--text", help="specimen text; defaults to the project hinting sample")
+    raster_text.add_argument("--text-file", type=Path, help="UTF-8 specimen text file")
+    raster_proof_command.add_argument(
+        "--ppem",
+        action="append",
+        type=int,
+        help="PPEM size; repeat to override the default low-PPEM matrix",
+    )
+    raster_proof_command.add_argument(
+        "--variation",
+        action="append",
+        metavar="TAG=VALUE",
+        help="variable-font location; repeat for each four-character axis tag",
+    )
+    raster_proof_command.add_argument(
+        "--hb-view",
+        default="hb-view",
+        help="hb-view executable name or path (default: hb-view)",
+    )
+    raster_proof_command.set_defaults(handler=_handle_raster_proof)
 
     validate_command = subcommands.add_parser(
         "validate", help="validate table and shaping preservation"
@@ -171,6 +209,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (
         ConfigError,
         PipelineError,
+        RasterProofError,
         SourceManifestError,
         SourceRoundingDependencyError,
         SourceRoundingError,
@@ -251,6 +290,42 @@ def _handle_proof(arguments: argparse.Namespace) -> None:
     # Proof's primary artefact is index.html.  Its short JSON summary is useful
     # on stdout in automation without introducing another required output flag.
     print(report["index"])
+
+
+def _parse_variation_location(values: Sequence[str] | None) -> dict[str, float]:
+    location: dict[str, float] = {}
+    for entry in values or ():
+        tag, separator, raw_value = entry.partition("=")
+        tag = tag.strip()
+        if not separator or not tag or not raw_value.strip():
+            raise ValueError(f"invalid --variation {entry!r}; expected TAG=VALUE")
+        if tag in location:
+            raise ValueError(f"duplicate --variation for axis {tag!r}")
+        try:
+            location[tag] = float(raw_value)
+        except ValueError as error:
+            raise ValueError(
+                f"invalid --variation value for axis {tag!r}: {raw_value!r}"
+            ) from error
+    return location
+
+
+def _handle_raster_proof(arguments: argparse.Namespace) -> None:
+    if arguments.text_file:
+        text = arguments.text_file.read_text(encoding="utf-8")
+    elif arguments.text is not None:
+        text = arguments.text
+    else:
+        text = DEFAULT_RASTER_PROOF_TEXT
+    summary = render_raster_proof(
+        arguments.font,
+        arguments.output,
+        text,
+        ppems=tuple(arguments.ppem) if arguments.ppem else DEFAULT_PPEMS,
+        location=_parse_variation_location(arguments.variation),
+        executable=arguments.hb_view,
+    )
+    print(summary.index)
 
 
 def _handle_validate(arguments: argparse.Namespace) -> None:

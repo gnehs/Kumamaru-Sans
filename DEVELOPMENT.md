@@ -72,6 +72,10 @@ kumamaru proof --before vendor/IBMPlexSansTC-Regular.ttf \
   --analysis build/analysis.json --build-report build/build-report.json \
   --output build/proof
 
+# 以 FreeType native hinting mode 建立目前 unhinted 產物的像素基準
+kumamaru raster-proof --font build/KumamaruSans-Regular.ttf \
+  --output build/raster-proof-unhinted
+
 # 驗證
 kumamaru validate --before vendor/IBMPlexSansTC-Regular.ttf \
   --after build/KumamaruSans-Regular.ttf --glyphs config/glyphsets/smoke.txt \
@@ -79,7 +83,7 @@ kumamaru validate --before vendor/IBMPlexSansTC-Regular.ttf \
 ```
 
 常用 Make 目標：`make lint`、`make test`、`make smoke`、`make full`、`make validate`、
-`make validate-full`、`make fontbakery`、`make proof`、`make source-inspect`、
+`make validate-full`、`make fontbakery`、`make proof`、`make raster-proof`、`make source-inspect`、
 `make source-round`、`make source-build-instances`、`make source-build-variable`、
 `make source-fontbakery`。
 
@@ -87,6 +91,49 @@ kumamaru validate --before vendor/IBMPlexSansTC-Regular.ttf \
 - `full`：處理 best cmap 中每個不重複的 encoded glyph（可安裝預覽應以此為準）
 
 缺少上游字型時，相依的 smoke／integration 應跳過，不應下載替代字型。
+
+### 低 PPEM raster proof
+
+向量 proof 用於檢查輪廓與 point index；它不會執行 TrueType instructions。Hinting 研究另用
+HarfBuzz 的 `hb-view` 透過 FreeType 產生 PNG，並明確設定 `FT_LOAD_DEFAULT`，避免
+`hb-view` 的 `FT_LOAD_NO_HINTING` 預設值讓 proof 意外停用 native hinting。這個模式會
+執行輸入字型實際包含的 instructions；目前 `make raster-proof` 的預設輸入刻意是 unhinted
+build，產物位於 `build/raster-proof-unhinted/`，作為日後 hinted pilot 的 A/B 基準。
+
+請先安裝含 FreeType 支援的 `hb-view`，並確認它可執行：
+
+```bash
+hb-view --version
+make raster-proof PYTHON=.venv/bin/python
+```
+
+`raster-proof` 預設產生 9、10、11、12、13、14、16、18、20、24、32、48 PPEM，
+輸出 `index.html`、`manifest.json` 與各尺寸 PNG。Variable Font 可指定位置：
+
+```bash
+kumamaru raster-proof \
+  --font 'build/source/variable-ttf/KumamaruSans[wght].ttf' \
+  --variation wght=450 --ppem 12 --ppem 16 \
+  --output build/raster-proof-text
+```
+
+`manifest.json` 記錄字型 SHA-256、`hb-view` 版本、FreeType load flags、PPEM 與 axis
+位置，提供可追溯的 A/B 比較 metadata。不同作業系統、FreeType 版本或 build configuration
+仍可能產生不同像素結果，不保證跨環境 bit-identical。
+
+### Windows VTT hinting pilot
+
+低 PPEM 基準確認問題後，使用獨立的
+[Windows VTT pilot](hinting/vtt/README.md)；正式 release pipeline 目前仍維持 unhinted。
+手動執行 **Prepare Windows VTT pilot** workflow，傳入成功的 **Build font and release**
+run ID 與預期 commit SHA，即可經 `vtt-licensed` environment 核准，在具備
+`self-hosted, Windows, X64, vtt` labels 的自有 Windows 10／11 runner 驗證 VTT 6.35，
+並產生含固定輸入、來源 run metadata、SHA-256 與 `vttshell.exe -?` 輸出的 workspace。
+
+VTT GUI 用來建立與調整 VTTTalk／CVT／Variation CVT；`vttshell.exe` 只負責重現編譯
+已存在的 VTT source。完成「日田國圓」pilot 後，用
+`scripts/windows/compile-vtt.ps1` 執行 source contract、全字型 `-a` 編譯、`-s` source
+strip 與 compiled contract，再以 `raster-proof` 與 unhinted baseline 做 A/B。
 
 ### 多字重 Glyphs source 建置
 
@@ -170,7 +217,10 @@ kumamaru source-round \
 
 - **「個」等字的去腳**：須從 `analysis.json`／proof 複製真實 `candidate_id` 寫入 `config/overrides.yaml`，不可猜測 ID；重建後用疊圖檢查。
 - **不預設刪除所有鉤**：鉤、挑、撇、捺與孤立點常影響辨識；預設只報告 spur/flare，高風險字見 `config/glyphsets/hooks.txt`。
-- **移除 hinting**：圓角會改變點索引，原 TrueType instructions 可能失效；MVP 預設移除 hinting 並標示 unhinted。
+- **移除 hinting**：圓角會改變點索引，原 TrueType instructions 可能失效；MVP 預設移除
+  hinting 並標示 unhinted。正式 source build 明確傳入 `fontmake --no-autohint`，集合驗證
+  也會拒絕殘留的全域 hinting tables 或 glyph instructions；hinting pilot 必須在最終輪廓
+  編譯後另行產生，不可悄悄改變基準產物。
 
 ### 發行 tag
 

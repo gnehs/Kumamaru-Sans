@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fontTools.ttLib import TTFont
@@ -20,6 +21,7 @@ def test_parser_exposes_expected_public_commands() -> None:
         "analyze",
         "build",
         "proof",
+        "raster-proof",
         "validate",
         "source-inspect",
         "source-round",
@@ -45,6 +47,129 @@ def test_parser_exposes_expected_public_commands() -> None:
     assert parsed.dry_run is True
     assert parsed.strict_upstream_sha is True
     assert parsed.strict_overrides is True
+
+
+def test_raster_proof_passes_native_hinting_matrix_options(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_render(*args: object, **kwargs: object) -> SimpleNamespace:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(index=tmp_path / "proof" / "index.html")
+
+    monkeypatch.setattr("kumamaru.cli.render_raster_proof", fake_render)
+    text_file = tmp_path / "specimen.txt"
+    text_file.write_text("  熊丸體  \n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "raster-proof",
+                "--font",
+                str(tmp_path / "font.ttf"),
+                "--output",
+                str(tmp_path / "proof"),
+                "--text-file",
+                str(text_file),
+                "--ppem",
+                "9",
+                "--ppem",
+                "12",
+                "--variation",
+                "wght=450",
+                "--hb-view",
+                "/opt/tools/hb-view",
+            ]
+        )
+        == 0
+    )
+
+    assert captured["args"] == (
+        tmp_path / "font.ttf",
+        tmp_path / "proof",
+        "  熊丸體  \n",
+    )
+    assert captured["kwargs"] == {
+        "ppems": (9, 12),
+        "location": {"wght": 450.0},
+        "executable": "/opt/tools/hb-view",
+    }
+    assert capsys.readouterr().out.strip().endswith("proof/index.html")
+
+
+def test_raster_proof_rejects_duplicate_variation_axes(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    status = main(
+        [
+            "raster-proof",
+            "--font",
+            str(tmp_path / "font.ttf"),
+            "--output",
+            str(tmp_path / "proof"),
+            "--variation",
+            "wght=400",
+            "--variation",
+            "wght=500",
+        ]
+    )
+
+    assert status == 2
+    assert "duplicate --variation" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "message"),
+    [
+        ("--ppem", "0", "positive integers"),
+        ("--variation", "weight=400", "four ASCII characters"),
+        ("--variation", "wght=nan", "must be finite"),
+    ],
+)
+def test_raster_proof_reports_invalid_matrix_values_at_the_cli_boundary(
+    option: str,
+    value: str,
+    message: str,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    status = main(
+        [
+            "raster-proof",
+            "--font",
+            str(tmp_path / "missing.ttf"),
+            "--output",
+            str(tmp_path / "proof"),
+            option,
+            value,
+        ]
+    )
+
+    assert status == 2
+    assert message in capsys.readouterr().err
+
+
+def test_raster_proof_rejects_an_explicitly_empty_specimen(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    status = main(
+        [
+            "raster-proof",
+            "--font",
+            str(tmp_path / "missing.ttf"),
+            "--output",
+            str(tmp_path / "proof"),
+            "--text",
+            "",
+        ]
+    )
+
+    assert status == 2
+    assert "must not be empty" in capsys.readouterr().err
 
 
 def test_parser_accepts_source_rounding_parameters() -> None:

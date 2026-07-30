@@ -11,9 +11,11 @@ SMOKE_DERIVED_SOURCE ?= $(BUILD)/source/Kumamaru Sans Smoke.glyphs
 SMOKE_SOURCE_REPORT ?= $(BUILD)/source/smoke-rounding-report.json
 VARIABLE_FONT ?= $(BUILD)/source/variable-ttf/KumamaruSans[wght].ttf
 SOURCE_FONTBAKERY_REPORT ?= $(BUILD)/source/fontbakery.json
+RASTER_FONT ?= $(BUILD)/KumamaruSans-Regular.ttf
+RASTER_PROOF ?= $(BUILD)/raster-proof-unhinted
 INSTANCE ?=
 
-.PHONY: lint test smoke full validate validate-full fontbakery proof source-inspect source-round source-round-smoke source-build-masters source-build-instance source-build-instances source-build-variable source-fontbakery
+.PHONY: lint test smoke full validate validate-full fontbakery proof raster-proof source-inspect source-round source-round-smoke source-build-masters source-build-instance source-build-instances source-build-variable source-fontbakery
 
 lint:
 	$(PYTHON) -m ruff format --check src tests
@@ -48,6 +50,14 @@ proof:
 		echo "skip: missing official upstream font: $(FONT)"; \
 	else \
 		$(PYTHON) -m kumamaru.cli proof --before "$(FONT)" --after "$(BUILD)/KumamaruSans-Regular.ttf" --glyphs "$(GLYPHS)" --analysis "$(BUILD)/analysis.json" --build-report "$(BUILD)/build-report.json" --output "$(BUILD)/proof"; \
+	fi
+
+raster-proof:
+	@if [ ! -f "$(RASTER_FONT)" ]; then \
+		echo "error: missing raster proof font: $(RASTER_FONT)"; \
+		exit 2; \
+	else \
+		$(PYTHON) -m kumamaru.cli raster-proof --font "$(RASTER_FONT)" --output "$(RASTER_PROOF)"; \
 	fi
 
 validate:
@@ -101,7 +111,7 @@ source-build-masters:
 		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
 	else \
 		mkdir -p "$(BUILD)/source/master-ttf" && \
-		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf --output-dir "$(BUILD)/source/master-ttf" --master-dir "$(BUILD)/source/master-build-ufo" --designspace-path "$(BUILD)/source/masters.designspace" --no-production-names --verbose ERROR && \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf --output-dir "$(BUILD)/source/master-ttf" --master-dir "$(BUILD)/source/master-build-ufo" --designspace-path "$(BUILD)/source/masters.designspace" --no-production-names --no-autohint --verbose ERROR && \
 		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(BUILD)/source/master-ttf"; \
 	fi
 
@@ -110,7 +120,7 @@ source-build-instances:
 		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
 	else \
 		mkdir -p "$(BUILD)/source/instance-ttf" && \
-		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i --output-dir "$(BUILD)/source/instance-ttf" --master-dir "$(BUILD)/source/instance-build-ufo" --designspace-path "$(BUILD)/source/instances.designspace" --no-production-names --verbose ERROR && \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i --output-dir "$(BUILD)/source/instance-ttf" --master-dir "$(BUILD)/source/instance-build-ufo" --designspace-path "$(BUILD)/source/instances.designspace" --no-production-names --no-autohint --verbose ERROR && \
 		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(BUILD)/source/instance-ttf"; \
 	fi
 
@@ -122,7 +132,7 @@ source-build-instance:
 		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
 	else \
 		mkdir -p "$(BUILD)/source/instance-ttf" && \
-		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i ".* $(INSTANCE)$$" --output-dir "$(BUILD)/source/instance-ttf" --master-dir "$(BUILD)/source/instance-build-ufo" --designspace-path "$(BUILD)/source/instances.designspace" --no-production-names --verbose ERROR && \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i ".* $(INSTANCE)$$" --output-dir "$(BUILD)/source/instance-ttf" --master-dir "$(BUILD)/source/instance-build-ufo" --designspace-path "$(BUILD)/source/instances.designspace" --no-production-names --no-autohint --verbose ERROR && \
 		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(BUILD)/source/instance-ttf"; \
 	fi
 
@@ -131,7 +141,7 @@ source-build-variable:
 		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
 	else \
 		mkdir -p "$(dir $(VARIABLE_FONT))" && \
-		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o variable --output-path "$(VARIABLE_FONT)" --master-dir "$(BUILD)/source/variable-build-ufo" --designspace-path "$(BUILD)/source/variable.designspace" --no-production-names --filter='...' --filter='kumamaru.filters.variable_compatibility::VariableCompatibilityFilter' --verbose ERROR && \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o variable --output-path "$(VARIABLE_FONT)" --master-dir "$(BUILD)/source/variable-build-ufo" --designspace-path "$(BUILD)/source/variable.designspace" --no-production-names --no-autohint --filter='...' --filter='kumamaru.filters.variable_compatibility::VariableCompatibilityFilter' --verbose ERROR && \
 		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(VARIABLE_FONT)"; \
 	fi
 

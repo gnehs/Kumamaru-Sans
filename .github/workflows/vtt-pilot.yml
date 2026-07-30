@@ -1,0 +1,166 @@
+name: Prepare Windows VTT pilot
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful Build font and release run ID containing kumamaru-sans-build
+        required: true
+        type: string
+      expected_head_sha:
+        description: Full commit SHA expected for the selected build run
+        required: true
+        type: string
+      allow_pull_request:
+        description: Explicitly allow a successful pull_request build instead of a trusted branch build
+        required: true
+        default: false
+        type: boolean
+      accept_vtt_license:
+        description: I am authorized to install and use Microsoft Visual TrueType on this runner
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  prepare-vtt-workspace:
+    name: Verify VTT and prepare editable variable font
+    runs-on: [self-hosted, Windows, X64, vtt]
+    environment: vtt-licensed
+    timeout-minutes: 20
+
+    steps:
+      - name: Confirm VTT installation authorization
+        shell: pwsh
+        env:
+          ACCEPT_VTT_LICENSE: ${{ inputs.accept_vtt_license }}
+        run: |
+          if ($env:ACCEPT_VTT_LICENSE -ne "true") {
+            throw "VTT installation authorization was not confirmed."
+          }
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Verify selected build provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          ALLOW_PULL_REQUEST: ${{ inputs.allow_pull_request }}
+        run: |
+          $Headers = @{
+            Accept = "application/vnd.github+json"
+            Authorization = "Bearer $env:GH_TOKEN"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $Uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:BUILD_RUN_ID"
+          $Run = Invoke-RestMethod -Uri $Uri -Headers $Headers
+          $WorkflowPath = ($Run.path -split "@", 2)[0]
+          if ($WorkflowPath -ne ".github/workflows/build-release.yml") {
+            throw "Run uses unexpected workflow: $($Run.path)"
+          }
+          if ($Run.status -ne "completed" -or $Run.conclusion -ne "success") {
+            throw "Build run must be completed successfully."
+          }
+          if ($env:EXPECTED_HEAD_SHA -notmatch "^[0-9a-f]{40}$") {
+            throw "expected_head_sha must be a full 40-character lowercase commit SHA."
+          }
+          if ($Run.head_sha -ne $env:EXPECTED_HEAD_SHA) {
+            throw "Build head SHA $($Run.head_sha) does not match expected $env:EXPECTED_HEAD_SHA."
+          }
+          if ($Run.event -eq "pull_request" -and $env:ALLOW_PULL_REQUEST -ne "true") {
+            throw "Pull request build requires explicit allow_pull_request confirmation."
+          }
+          New-Item -ItemType Directory -Path build/vtt-pilot -Force | Out-Null
+          [ordered]@{
+            repository = $env:GITHUB_REPOSITORY
+            run_id = $Run.id
+            run_url = $Run.html_url
+            workflow_path = $Run.path
+            event = $Run.event
+            head_branch = $Run.head_branch
+            head_sha = $Run.head_sha
+            conclusion = $Run.conclusion
+          } | ConvertTo-Json | Set-Content build/vtt-pilot/run-metadata.json -Encoding utf8
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Download verified font build
+        uses: actions/download-artifact@v8
+        with:
+          name: kumamaru-sans-build
+          path: build/download
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run_id }}
+
+      - name: Locate variable font
+        id: font
+        shell: pwsh
+        run: |
+          $Fonts = @(
+            Get-ChildItem build/download -Recurse -File -Filter "*.ttf" |
+              Where-Object { $_.Name -eq "KumamaruSans[wght].ttf" }
+          )
+          if ($Fonts.Count -ne 1) {
+            throw "Expected exactly one KumamaruSans[wght].ttf, found $($Fonts.Count)."
+          }
+          "path=$($Fonts[0].FullName)" | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Prepare traceable VTT workspace
+        shell: pwsh
+        run: |
+          python -m kumamaru.vtt_contract prepare `
+            --input '${{ steps.font.outputs.path }}' `
+            --output build/vtt-pilot
+          Copy-Item hinting/vtt/README.md build/vtt-pilot/WORKFLOW.md
+
+      - name: Install and verify Microsoft Visual TrueType
+        id: vtt
+        shell: pwsh
+        run: ./scripts/windows/install-vtt.ps1
+
+      - name: Capture VTTShell command-line contract
+        shell: pwsh
+        env:
+          VTT_SHELL: ${{ steps.vtt.outputs.path }}
+        run: |
+          $Output = & $env:VTT_SHELL "-?" 2>&1
+          $Output | Tee-Object -FilePath build/vtt-pilot/vttshell-help.txt
+          if (-not (Select-String -Path build/vtt-pilot/vttshell-help.txt -Pattern "compile")) {
+            throw "VTTShell help did not expose a compile command."
+          }
+          @(
+            "vtt_version=${{ steps.vtt.outputs.version }}"
+            "installer_sha256=${{ steps.vtt.outputs.installer_sha256 }}"
+            "runner=$env:RUNNER_OS/self-hosted"
+            "tooling_sha=${{ github.sha }}"
+          ) | Set-Content build/vtt-pilot/toolchain.txt -Encoding utf8
+
+      - name: Upload editable VTT pilot workspace
+        uses: actions/upload-artifact@v7
+        with:
+          name: vtt-pilot-workspace-${{ inputs.build_run_id }}
+          path: build/vtt-pilot
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
