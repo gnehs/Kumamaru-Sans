@@ -11,8 +11,9 @@ SMOKE_DERIVED_SOURCE ?= $(BUILD)/source/Kumamaru Sans Smoke.glyphs
 SMOKE_SOURCE_REPORT ?= $(BUILD)/source/smoke-rounding-report.json
 VARIABLE_FONT ?= $(BUILD)/source/variable-ttf/KumamaruSans[wght].ttf
 SOURCE_FONTBAKERY_REPORT ?= $(BUILD)/source/fontbakery.json
+INSTANCE ?=
 
-.PHONY: lint test smoke full validate validate-full fontbakery proof source-inspect source-round source-round-smoke source-build-masters source-build-instances source-build-variable source-fontbakery
+.PHONY: lint test smoke full validate validate-full fontbakery proof source-inspect source-round source-round-smoke source-build-masters source-build-instance source-build-instances source-build-variable source-fontbakery
 
 lint:
 	$(PYTHON) -m ruff format --check src tests
@@ -110,6 +111,18 @@ source-build-instances:
 	else \
 		mkdir -p "$(BUILD)/source/instance-ttf" && \
 		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i --output-dir "$(BUILD)/source/instance-ttf" --master-dir "$(BUILD)/source/instance-build-ufo" --designspace-path "$(BUILD)/source/instances.designspace" --no-production-names --verbose ERROR && \
+		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(BUILD)/source/instance-ttf"; \
+	fi
+
+source-build-instance:
+	@if [ -z "$(INSTANCE)" ]; then \
+		echo "error: INSTANCE is required"; \
+		exit 2; \
+	elif [ ! -f "$(DERIVED_SOURCE)" ]; then \
+		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
+	else \
+		mkdir -p "$(BUILD)/source/instance-ttf" && \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i "$(INSTANCE)" --output-dir "$(BUILD)/source/instance-ttf" --master-dir "$(BUILD)/source/instance-build-ufo" --designspace-path "$(BUILD)/source/instances.designspace" --no-production-names --verbose ERROR && \
 		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(BUILD)/source/instance-ttf"; \
 	fi
 

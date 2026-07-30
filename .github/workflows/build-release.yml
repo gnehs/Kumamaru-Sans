@@ -27,19 +27,21 @@ env:
   VARIABLE_FONT: build/source/variable-ttf/KumamaruSans[wght].ttf
 
 jobs:
-  build:
-    name: Build and validate static and variable TTFs
+  prepare:
+    name: Prepare transformed font source
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -51,6 +53,7 @@ jobs:
           python -m pip install -e '.[source,dev]'
 
       - name: Verify source and tag versions
+        id: version
         env:
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
@@ -63,7 +66,7 @@ jobs:
           if [ -n "${RELEASE_TAG}" ]; then
             test "${RELEASE_TAG}" = "${PROJECT_VERSION}"
           fi
-          echo "VERSION=${PROJECT_VERSION}" >> "${GITHUB_ENV}"
+          echo "version=${PROJECT_VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Lint and run tests
         run: |
@@ -71,7 +74,7 @@ jobs:
           make test
 
       - name: Restore pinned IBM Plex Sans TC source archive
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache/ibm-plex-sans-tc
           key: ibm-plex-sans-tc-sources-${{ env.IBM_PLEX_VERSION }}-${{ env.IBM_PLEX_SOURCE_ARCHIVE_SHA256 }}
@@ -100,19 +103,172 @@ jobs:
           test -s "${DERIVED_SOURCE}"
           test -s build/source/rounding-report.json
 
-      - parallel:
-          - name: Build eight static weight instances
-            run: |
-              make source-build-instances PYTHON=python
-              test "$(find build/source/instance-ttf -maxdepth 1 -type f -name '*.ttf' | wc -l)" -eq 8
+      - name: Upload transformed source
+        uses: actions/upload-artifact@v7
+        with:
+          name: transformed-source
+          path: |
+            build/source/Kumamaru Sans.glyphs
+            build/source/manifest.json
+            build/source/rounding-report.json
+          if-no-files-found: error
+          retention-days: 1
 
-          - name: Build variable font
-            run: |
-              make source-build-variable PYTHON=python
-              test -s "${VARIABLE_FONT}"
+  build-static:
+    name: Build static ${{ matrix.weight }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        weight:
+          - Thin
+          - ExtraLight
+          - Light
+          - Regular
+          - Text
+          - Medium
+          - SemiBold
+          - Bold
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and source dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[source]'
+
+      - name: Download transformed source
+        uses: actions/download-artifact@v8
+        with:
+          name: transformed-source
+          path: build/source
+
+      - name: Build ${{ matrix.weight }} static font
+        env:
+          WEIGHT: ${{ matrix.weight }}
+        run: |
+          make source-build-instance PYTHON=python INSTANCE="Kumamaru Sans ${WEIGHT}"
+          test "$(find build/source/instance-ttf -maxdepth 1 -type f -name '*.ttf' | wc -l)" -eq 1
+          test -s "build/source/instance-ttf/KumamaruSans-${WEIGHT}.ttf"
+
+      - name: Upload ${{ matrix.weight }} static font
+        uses: actions/upload-artifact@v7
+        with:
+          name: static-font-${{ matrix.weight }}
+          path: build/source/instance-ttf/KumamaruSans-${{ matrix.weight }}.ttf
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  build-variable:
+    name: Build variable font
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and source dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[source]'
+
+      - name: Download transformed source
+        uses: actions/download-artifact@v8
+        with:
+          name: transformed-source
+          path: build/source
+
+      - name: Build variable font
+        run: |
+          make source-build-variable PYTHON=python
+          test -s "${VARIABLE_FONT}"
+
+      - name: Upload variable font
+        uses: actions/upload-artifact@v7
+        with:
+          name: variable-font
+          path: ${{ env.VARIABLE_FONT }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  package:
+    name: Validate and package release assets
+    needs:
+      - prepare
+      - build-static
+      - build-variable
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Download source reports
+        uses: actions/download-artifact@v8
+        with:
+          name: transformed-source
+          path: build/source
+
+      - name: Download static fonts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: static-font-*
+          path: build/source/instance-ttf
+          merge-multiple: true
+
+      - name: Download variable font
+        uses: actions/download-artifact@v8
+        with:
+          name: variable-font
+          path: build/source/variable-ttf
 
       - name: Validate source build contract
         run: |
+          test "$(find build/source/instance-ttf -maxdepth 1 -type f -name '*.ttf' | wc -l)" -eq 8
+          test -s "${VARIABLE_FONT}"
           python -m kumamaru.source_validation \
             build/source/instance-ttf \
             "${VARIABLE_FONT}" \
@@ -148,7 +304,7 @@ jobs:
           )
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kumamaru-sans-build
           path: |
@@ -166,7 +322,7 @@ jobs:
   release:
     name: Publish GitHub Release
     if: github.ref_type == 'tag'
-    needs: build
+    needs: package
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -174,7 +330,7 @@ jobs:
 
     steps:
       - name: Download verified build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: kumamaru-sans-build
           path: release
