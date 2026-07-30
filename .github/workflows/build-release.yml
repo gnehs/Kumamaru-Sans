@@ -212,7 +212,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: variable-font
-          path: ${{ env.VARIABLE_FONT }}
+          path: build/source/variable-ttf/KumamaruSans[[]wght].ttf
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
