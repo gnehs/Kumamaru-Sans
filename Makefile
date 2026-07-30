@@ -132,7 +132,7 @@ source-build-instance:
 		echo "skip: missing derived Glyphs source: $(DERIVED_SOURCE)"; \
 	else \
 		mkdir -p "$(BUILD)/source/instance-ttf" && \
-		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i ".* $(INSTANCE)$$" --output-dir "$(BUILD)/source/instance-ttf" --master-dir "$(BUILD)/source/instance-build-ufo" --designspace-path "$(BUILD)/source/instances.designspace" --no-production-names --no-autohint --verbose ERROR && \
+		$(PYTHON) -m fontmake "$(DERIVED_SOURCE)" -o ttf -i "$(INSTANCE)" --output-dir "$(BUILD)/source/instance-ttf" --master-dir "$(BUILD)/source/instance-build-ufo" --designspace-path "$(BUILD)/source/instances.designspace" --no-production-names --no-autohint --verbose ERROR && \
 		$(PYTHON) -m kumamaru.source_metadata --config "$(CONFIG)" "$(BUILD)/source/instance-ttf"; \
 	fi
 
