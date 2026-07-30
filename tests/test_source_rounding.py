@@ -634,6 +634,66 @@ def test_rounds_flat_terminals_into_tangent_cubic_caps_across_masters(
     assert len({tuple(types) for types in node_types_by_master}) == 1
 
 
+@pytest.mark.parametrize("rotation", [0, 2])
+def test_rounds_multi_segment_terminal_caps_across_masters(rotation: int) -> None:
+    font = _font()
+    glyph = font.glyphs["A"]
+    for master, (_master_id, _name, scale) in zip(
+        font.masters,
+        MASTER_DATA,
+        strict=True,
+    ):
+        points = [
+            (0, 0),
+            (400 * scale, 0),
+            (420 * scale, 50 * scale),
+            (400 * scale, 100 * scale),
+            (0, 100 * scale),
+        ]
+        points = points[rotation:] + points[:rotation]
+        glyph.layers[master.id].paths = [_path(points)]
+
+    report = round_glyphs_font(font, ["A"], {"*": 12})
+
+    terminals = [item for item in report["glyphs"][0]["applied"] if item["kind"] == "terminal"]
+    assert len(terminals) == 2
+    assert {
+        master_report["cap_segment_count"]
+        for terminal in terminals
+        for master_report in terminal["masters"]
+    } == {1, 2}
+    for master in font.masters:
+        nodes = list(glyph.layers[master.id].paths[0].nodes)
+        assert len(nodes) == 14
+        assert [node.type for node in nodes].count(CURVE) == 4
+
+
+def test_short_bold_master_uses_shallower_compatible_terminal_caps() -> None:
+    font = _font()
+    glyph = font.glyphs["A"]
+    dimensions = {
+        "Light": (120, 90),
+        "Regular": (120, 100),
+        "Bold": (30, 120),
+    }
+    for master in font.masters:
+        length, width = dimensions[master.name]
+        glyph.layers[master.id].paths = [_path([(0, 0), (length, 0), (length, width), (0, width)])]
+
+    report = round_glyphs_font(font, ["A"], {"*": 12})
+
+    terminals = [item for item in report["glyphs"][0]["applied"] if item["kind"] == "terminal"]
+    assert len(terminals) == 2
+    assert not [item for item in report["glyphs"][0]["skipped"] if item["kind"] == "terminal"]
+    bold_caps = [
+        master_report
+        for terminal in terminals
+        for master_report in terminal["masters"]
+        if master_report["master_name"] == "Bold"
+    ]
+    assert all(cap["radius"] == pytest.approx(15) for cap in bold_caps)
+
+
 def test_rounds_overlapping_strokes_as_black_contours_not_counters() -> None:
     font = _font()
     glyph = font.glyphs["A"]

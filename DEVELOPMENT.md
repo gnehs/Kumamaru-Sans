@@ -160,7 +160,9 @@ kumamaru source-round \
 - 結構凹角沿用較小的 inner radius，避免交會處與外角使用相同的大半徑。
 - 任一 master 不安全時，該候選會整組跳過，不會只修改部分字重。
 - 含 bracket layer 的所選 glyph 會整字跳過；後續需實作 bracket-aware 映射。
-- 尚未移植靜態 TTF pipeline 的 spur override；圓頭 terminal 目前只涵蓋可由單一直線 cap 與兩側 shaft 安全辨識的輪廓。
+- 尚未移植靜態 TTF pipeline 的 spur override；圓頭 terminal 目前涵蓋最多五段短線構成、
+  且可由兩側 shaft 安全辨識的輪廓。Regular 確認為端點後，其他 masters 可在較寬的幾何容差內
+  縮短圓帽深度，以保持跨字重拓撲一致。
 - `fontmake` 會由 Glyphs source 重新編譯 OpenType tables，因此不追求與 IBM 發行 TTF 二進位等價；
   每次自動 build 仍須通過專案 metadata、字集、`fvar`／`STAT` 與 FontBakery gates。
 

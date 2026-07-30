@@ -108,6 +108,7 @@ class _TerminalEdit:
     end_control: _Point | None
     shaft_width: float
     trim_distance: float
+    cap_segment_count: int
 
 
 _BRACKET_LAYER_NAME = re.compile(r".*[\[\]]\s*\d+\s*\].*")
@@ -118,6 +119,12 @@ _RELAXED_TERMINAL_PARALLEL_ERROR_DEGREES = 2.0
 _RELAXED_TERMINAL_MINIMUM_SIDE_RATIO = 2.5
 _MINIMUM_TERMINAL_SIDE_RATIO = 1.05
 _MINIMUM_COMPACT_TERMINAL_SIDE_RATIO = 0.5
+_MINIMUM_MAPPED_TERMINAL_SIDE_RATIO = 0.25
+_MAXIMUM_MAPPED_TERMINAL_PARALLEL_ERROR_DEGREES = 18.0
+_MAXIMUM_MAPPED_TERMINAL_PERPENDICULAR_ERROR_DEGREES = 32.0
+_MAXIMUM_TERMINAL_CAP_SEGMENTS = 5
+_MAXIMUM_TERMINAL_CHAIN_LENGTH_RATIO = 2.0
+_MAXIMUM_TERMINAL_CHAIN_DEPTH_RATIO = 0.8
 _MINIMUM_CORNER_INTERIOR_DEGREES = 25.0
 _MAXIMUM_CORNER_INTERIOR_DEGREES = 165.0
 
@@ -336,6 +343,22 @@ def _angle_error_degrees(a: _Point, b: _Point) -> float:
     return math.degrees(math.acos(cosine))
 
 
+def _cyclic_indices(
+    start_exclusive: int,
+    end_inclusive: int,
+    count: int,
+) -> list[int]:
+    indices: list[int] = []
+    index = (start_exclusive + 1) % count
+    while True:
+        indices.append(index)
+        if index == end_inclusive:
+            return indices
+        index = (index + 1) % count
+        if len(indices) >= count:
+            return []
+
+
 def _incoming_side(
     path: Any,
     end_index: int,
@@ -420,14 +443,20 @@ def _terminal_geometry(
     curve: str,
     offcurve: str,
     maximum_width: float,
+    allow_master_variation: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     nodes = list(path.nodes)
     if not path.closed or len(nodes) < 4:
         return None, "terminal path is not a closed contour with at least four nodes"
     start_index = candidate.start_node_index
     end_index = candidate.end_node_index
-    if (start_index + 1) % len(nodes) != end_index or nodes[end_index].type != line:
-        return None, "terminal cap is not a single LINE segment"
+    cap_indices = _cyclic_indices(start_index, end_index, len(nodes))
+    if (
+        not cap_indices
+        or len(cap_indices) > _MAXIMUM_TERMINAL_CAP_SEGMENTS
+        or any(nodes[index].type != line for index in cap_indices)
+    ):
+        return None, "terminal cap is not a chain of one to five LINE segments"
     if nesting_depth % 2 == 1:
         return None, "terminal belongs to a counter contour"
     if not _is_corner_type(
@@ -458,8 +487,11 @@ def _terminal_geometry(
     if unit_in is None or unit_out is None:
         return None, "terminal shaft tangent is degenerate"
     parallel_error = _angle_error_degrees(unit_in, _scale(unit_out, -1.0))
-    if parallel_error > 12.0:
-        return None, "terminal shaft sides are not anti-parallel within 12 degrees"
+    maximum_parallel_error = (
+        _MAXIMUM_MAPPED_TERMINAL_PARALLEL_ERROR_DEGREES if allow_master_variation else 12.0
+    )
+    if parallel_error > maximum_parallel_error:
+        return None, "terminal shaft sides exceed the parallel safety gate"
 
     start = _xy(nodes[start_index])
     end = _xy(nodes[end_index])
@@ -472,16 +504,30 @@ def _terminal_geometry(
     if inward is None:
         return None, "terminal shaft axis is degenerate"
     outward = _scale(inward, -1.0)
+    cap_points = [start, *(_xy(nodes[index]) for index in cap_indices)]
+    cap_chain_length = sum(
+        _length(_sub(following, previous))
+        for previous, following in zip(cap_points, cap_points[1:], strict=False)
+    )
+    cap_depths = [_dot(_sub(point, start), outward) for point in cap_points]
+    if len(cap_indices) > 1 and (
+        cap_chain_length > width * _MAXIMUM_TERMINAL_CHAIN_LENGTH_RATIO
+        or max(cap_depths) > width * _MAXIMUM_TERMINAL_CHAIN_DEPTH_RATIO
+        or min(cap_depths) < -width * 0.1
+    ):
+        return None, "terminal cap chain exceeds the compact geometry gate"
     perpendicular_error = 90.0 - _angle_error_degrees(width_unit, inward)
     relaxed_perpendicular_gate = (
         abs(perpendicular_error) <= _RELAXED_TERMINAL_PERPENDICULAR_ERROR_DEGREES
         and parallel_error <= _RELAXED_TERMINAL_PARALLEL_ERROR_DEGREES
         and min(incoming_length, outgoing_length) >= width * _RELAXED_TERMINAL_MINIMUM_SIDE_RATIO
     )
-    if (
-        abs(perpendicular_error) > _MAX_TERMINAL_PERPENDICULAR_ERROR_DEGREES
-        and not relaxed_perpendicular_gate
-    ):
+    maximum_perpendicular_error = (
+        _MAXIMUM_MAPPED_TERMINAL_PERPENDICULAR_ERROR_DEGREES
+        if allow_master_variation
+        else _MAX_TERMINAL_PERPENDICULAR_ERROR_DEGREES
+    )
+    if abs(perpendicular_error) > maximum_perpendicular_error and not relaxed_perpendicular_gate:
         return (
             None,
             "terminal cap exceeds the perpendicular safety gate",
@@ -492,11 +538,18 @@ def _terminal_geometry(
         sum(node.type == line for node in nodes) == 2
         and side_ratio >= _MINIMUM_COMPACT_TERMINAL_SIDE_RATIO
     )
+    is_compatible_short_master = (
+        allow_master_variation and side_ratio >= _MINIMUM_MAPPED_TERMINAL_SIDE_RATIO
+    )
     # A closed stroke may have round caps at both ends. Each normal edit
     # consumes half the stroke width from each side. Compact dot contours from
     # the source instead have exactly two LINE caps and cubic sides; those may
     # use shallower half-side caps so the edits meet without crossing.
-    if side_ratio < _MINIMUM_TERMINAL_SIDE_RATIO and not is_compact_two_cap_stroke:
+    if (
+        side_ratio < _MINIMUM_TERMINAL_SIDE_RATIO
+        and not is_compact_two_cap_stroke
+        and not is_compatible_short_master
+    ):
         return None, "terminal shaft sides are too short for non-overlapping round caps"
 
     cap_depth = min(width / 2.0, minimum_side_length / 2.0)
@@ -535,6 +588,7 @@ def _terminal_geometry(
             ),
             "shaft_width": width,
             "trim_distance": cap_depth,
+            "cap_segment_count": len(cap_indices),
         },
         None,
     )
@@ -578,29 +632,33 @@ def _reference_terminal_candidates(
     candidates: list[_TerminalCandidate] = []
     for path_index, path in enumerate(paths):
         nodes = list(path.nodes)
-        for end_index, node in enumerate(nodes):
-            if node.type != line:
+        if not path.closed or len(nodes) < 4:
+            continue
+        for start_index, node in enumerate(nodes):
+            if node.type == offcurve:
                 continue
-            start_index = (end_index - 1) % len(nodes)
-            if nodes[start_index].type == offcurve:
-                continue
-            candidate = _TerminalCandidate(path_index, start_index, end_index)
-            geometry, _ = _terminal_geometry(
-                path,
-                candidate,
-                nesting_depth=depths[path_index],
-                line=line,
-                curve=curve,
-                offcurve=offcurve,
-                maximum_width=maximum_width,
-            )
-            if geometry is not None and _terminal_is_exposed(
-                paths,
-                depths,
-                candidate,
-                geometry,
-            ):
-                candidates.append(candidate)
+            for segment_count in range(1, _MAXIMUM_TERMINAL_CAP_SEGMENTS + 1):
+                end_index = (start_index + segment_count) % len(nodes)
+                if nodes[end_index].type != line:
+                    break
+                candidate = _TerminalCandidate(path_index, start_index, end_index)
+                geometry, _ = _terminal_geometry(
+                    path,
+                    candidate,
+                    nesting_depth=depths[path_index],
+                    line=line,
+                    curve=curve,
+                    offcurve=offcurve,
+                    maximum_width=maximum_width,
+                )
+                if geometry is not None and _terminal_is_exposed(
+                    paths,
+                    depths,
+                    candidate,
+                    geometry,
+                ):
+                    candidates.append(candidate)
+                    break
     return candidates
 
 
@@ -907,6 +965,7 @@ def _prepare_terminal_edit(
         curve=curve,
         offcurve=offcurve,
         maximum_width=maximum_width,
+        allow_master_variation=True,
     )
     if reason is not None:
         return None, f"master {master.name!r}: {reason}"
@@ -991,7 +1050,12 @@ def _apply_terminal_edit(
         node_class((edit.control_4.x, edit.control_4.y), type=offcurve),
         node_class((edit.end.x, edit.end.y), type=curve, smooth=True, name=end.name),
     ]
-    edit.path.nodes = nodes[:end_index] + replacement + nodes[end_index + 1 :]
+    if start_index < end_index:
+        edit.path.nodes = nodes[: start_index + 1] + replacement + nodes[end_index + 1 :]
+    else:
+        # The cap crosses the stored contour start. Rotating a closed path is
+        # topology-preserving and keeps the surviving start node before the new cap.
+        edit.path.nodes = nodes[end_index + 1 : start_index + 1] + replacement
 
 
 def _edit_report(edit: _MasterEdit) -> dict[str, Any]:
@@ -1013,7 +1077,8 @@ def _terminal_edit_report(edit: _TerminalEdit) -> dict[str, Any]:
         "shaft_width": edit.shaft_width,
         "radius": edit.trim_distance,
         "trim_distance": edit.trim_distance,
-        "added_nodes": 5,
+        "cap_segment_count": edit.cap_segment_count,
+        "added_nodes": 6 - edit.cap_segment_count,
     }
 
 
@@ -1032,7 +1097,7 @@ def round_glyphs_font(
     """Round compatible line corners and flat terminals across every source master.
 
     ``inner_radii_by_master`` opts white counter corners into rounding.
-    ``terminal_rounding`` opts safe single-line caps into tangent cubic rounding.
+    ``terminal_rounding`` opts safe one-to-five-line caps into tangent cubic rounding.
     ``all_exporting_glyphs`` always uses the bounded compact report; callers may
     also select that mode with ``glyph_tokens=None`` and ``compact_report=True``.
     """
